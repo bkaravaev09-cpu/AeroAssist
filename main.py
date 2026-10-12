@@ -50,9 +50,9 @@ class AeroAssistApp(ctk.CTk):
         self.info_box.insert(
             "0.0",
             "Instrukcja obsługi:\n"
-            "• Ruch głowy — płynne przesuwanie kursora\n"
+            "• Ruch głowy — przesuwanie kursora\n"
             "• Przytrzymanie głowy przy krawędzi — autoprzewijanie\n"
-            "• Mrugnięcie lewym okiem / zatrzymanie — lewy klik\n"
+            "• Mrugnięcie lewym okiem — lewy klik\n"
             "• Zamknięcie oczu (> 1.5s) — asystent głosowy\n"
             "• 4 szybkie mrugnięcia — natychmiastowe wyłączenie"
         )
