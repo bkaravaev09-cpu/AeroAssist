@@ -56,11 +56,13 @@ class PolishVoiceAssistant:
             self.speak("Problem z mikrofonem")
 
     def _dispatch(self, cmd):
+        # 1. Поиск информации в Google
         if "szukaj" in cmd or "znajdź" in cmd:
             query = cmd.replace("szukaj w google", "").replace("szukaj", "").replace("znajdź", "").strip()
             self.speak(f"Szukam w Google: {query}")
             webbrowser.open(f"https://www.google.com/search?q={query}")
 
+        # 2. Запуск веб-сервисов
         elif "youtube" in cmd or "jutub" in cmd:
             self.speak("Otwieram YouTube")
             webbrowser.open("https://youtube.com")
@@ -69,10 +71,37 @@ class PolishVoiceAssistant:
             self.speak("Uruchamiam przeglądarkę")
             webbrowser.open("https://google.pl")
 
-        elif "klawiatura" in cmd or "klawiaturę" in cmd:
-            self.speak("Uruchamiam klawiaturę ekranową")
-            subprocess.Popen(["osk.exe"])
+        # 3. Управление экранной клавиатурой
+        elif "zamknij klawiaturę" in cmd or "schowaj klawiaturę" in cmd or "wyłącz klawiaturę" in cmd:
+            self.speak("Zamykam klawiaturę")
+            try:
+                # Закрываем стандартную osk и современную сенсорную клавиатуру
+                subprocess.run("taskkill /f /im osk.exe", shell=True, capture_output=True)
+                subprocess.run("taskkill /f /im TextInputHost.exe", shell=True, capture_output=True)
+            except Exception as e:
+                print(f"[ОШИБКА ЗАКРЫТИЯ КЛАВИАТУРЫ]: {e}")
 
+        elif "klawiatura" in cmd or "klawiaturę" in cmd:
+            self.speak("Uruchamiam klawiaturę")
+            try:
+                subprocess.Popen("cmd.exe /c start osk.exe", shell=True)
+            except Exception as e:
+                print(f"[ОШИБКА ЗАПУСКА КЛАВИАТУРЫ]: {e}")  
+
+        # 4. Переключение и управление окнами (Alt+Tab, свернуть всё)
+        elif "przełącz" in cmd or "zmień okno" in cmd or "następne" in cmd:
+            self.speak("Przełączam okno")
+            # Эмуляция Alt+Tab для смены активного окна
+            import pyautogui
+            pyautogui.hotkey('alt', 'tab')
+
+        elif "pulpit" in cmd or "zminimalizuj" in cmd:
+            self.speak("Pokazuję pulpit")
+            # Свернуть все окна (Win + D)
+            import pyautogui
+            pyautogui.hotkey('win', 'd')
+
+        # 5. Инструменты Windows
         elif "notatnik" in cmd:
             self.speak("Otwieram notatnik")
             subprocess.Popen(["notepad.exe"])
