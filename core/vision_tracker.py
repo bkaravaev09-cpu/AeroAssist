@@ -31,16 +31,12 @@ class VisionTracker:
         self.edge_threshold_y = 0.06
         self.drift_speed = 22.0
         
-        # Адаптивный порог EAR под анатомию глаз
+        # Адаптивный порог EAR
         self.calibration_frames = []
-        self.blink_threshold = 0.15  # Безопасное стартовое значение
+        self.blink_threshold = 0.15
         self.is_calibrated = False
-
-        self.dwell_time = 0.9
-        self.hover_start = None
-        self.last_pos = (self.cur_x, self.cur_y)
         
-        # Ассистент (> 1.5 сек удержания)
+        # Ассистент (> 1.5 сек закрытия обоих глаз)
         self.eyes_closed_start = None
         self.assistant_triggered = False
 
@@ -75,12 +71,12 @@ class VisionTracker:
         right_ear = self.calculate_ear(landmarks, 386, 374, 362, 263)
         avg_ear = (left_ear + right_ear) / 2.0
 
-        # Автокалибровка порога под разрез глаз за первые 25 кадров
+        # Автокалибровка под разрез глаз
         if not self.is_calibrated:
             self.calibration_frames.append(avg_ear)
             if len(self.calibration_frames) >= 25:
                 normal_open_ear = np.median(self.calibration_frames)
-                self.blink_threshold = normal_open_ear * 0.65  # 65% от нормы считается закрытием
+                self.blink_threshold = normal_open_ear * 0.65
                 self.is_calibrated = True
                 print(f"[КАЛИБРОВКА] Базовый EAR: {normal_open_ear:.4f} | Порог моргания: {self.blink_threshold:.4f}")
 
@@ -88,7 +84,7 @@ class VisionTracker:
         right_closed = right_ear < self.blink_threshold
         both_closed = left_closed and right_closed
 
-        # 1. Распознавание 4 быстрых морганий
+        # 1. Распознавание 4 быстрых морганий (Выход)
         if both_closed:
             if not self.both_eyes_was_closed and (now - self.last_blink_registered > 0.18):
                 self.both_eyes_was_closed = True
@@ -106,7 +102,7 @@ class VisionTracker:
         else:
             self.both_eyes_was_closed = False
 
-        # 2. Долгое удержание закрытых глаз (> 1.5 сек) -> Ассистент
+        # 2. Долгое закрытие обоих глаз (> 1.5 сек) -> Ассистент
         if both_closed:
             if self.eyes_closed_start is None:
                 self.eyes_closed_start = now
@@ -124,21 +120,16 @@ class VisionTracker:
         offset_x = nose.x - 0.5
         offset_y = nose.y - 0.5
 
-        # Накопление непрерывного движения у границ
-        is_drifting = False
         if abs(offset_x) > self.edge_threshold_x:
             sign = 1 if offset_x > 0 else -1
             factor = (abs(offset_x) - self.edge_threshold_x) / 0.08
             self.accum_drift_x += sign * self.drift_speed * max(1.0, factor)
-            is_drifting = True
 
         if abs(offset_y) > self.edge_threshold_y:
             sign = 1 if offset_y > 0 else -1
             factor = (abs(offset_y) - self.edge_threshold_y) / 0.08
             self.accum_drift_y += sign * self.drift_speed * max(1.0, factor)
-            is_drifting = True
 
-        # Базовая позиция + накопленный дрейф
         target_x = (offset_x * self.sensitivity * self.screen_w + self.screen_w / 2) + self.accum_drift_x
         target_y = (offset_y * self.sensitivity * self.screen_h + self.screen_h / 2) + self.accum_drift_y
 
@@ -151,21 +142,7 @@ class VisionTracker:
 
         pyautogui.moveTo(final_x, final_y)
 
-        # 4. Левый клик (подмигивание левым глазом)
+        # 4. Единственный клик: подмигивание левым глазом
         if left_closed and not right_closed:
             pyautogui.click()
-            time.sleep(0.25)
-            return
-
-        # 5. Dwell-клик при остановке на одном месте
-        cur_pos = (final_x, final_y)
-        dist = np.linalg.norm(np.array(cur_pos) - np.array(self.last_pos))
-        if dist < 12 and not is_drifting and not both_closed:
-            if self.hover_start is None:
-                self.hover_start = now
-            elif now - self.hover_start > self.dwell_time:
-                pyautogui.click()
-                self.hover_start = None
-        else:
-            self.hover_start = now
-        self.last_pos = cur_pos
+            time.sleep(0.3)
