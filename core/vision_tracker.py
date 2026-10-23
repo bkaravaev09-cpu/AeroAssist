@@ -1,12 +1,14 @@
+import ctypes
+import time
+from ctypes import wintypes
+
 import cv2
 import mediapipe as mp
 import numpy as np
-import time
-import ctypes
-from ctypes import wintypes
 
 # ----------------- Win32 API & SendInput -----------------
 user32 = ctypes.windll.user32
+
 
 class MOUSEINPUT(ctypes.Structure):
     _fields_ = [
@@ -15,24 +17,26 @@ class MOUSEINPUT(ctypes.Structure):
         ("mouseData", wintypes.DWORD),
         ("dwFlags", wintypes.DWORD),
         ("time", wintypes.DWORD),
-        ("dwExtraInfo", ctypes.POINTER(wintypes.ULONG))
+        ("dwExtraInfo", ctypes.POINTER(wintypes.ULONG)),
     ]
+
 
 class INPUT(ctypes.Structure):
     class _INPUT_UNION(ctypes.Union):
         _fields_ = [("mi", MOUSEINPUT)]
+
     _anonymous_ = ("_union",)
-    _fields_ = [
-        ("type", wintypes.DWORD),
-        ("_union", _INPUT_UNION)
-    ]
+    _fields_ = [("type", wintypes.DWORD), ("_union", _INPUT_UNION)]
+
 
 INPUT_MOUSE = 0
 MOUSEEVENTF_LEFTDOWN = 0x0002
 MOUSEEVENTF_LEFTUP = 0x0004
 
+
 def win32_move(x, y):
     user32.SetCursorPos(int(x), int(y))
+
 
 def win32_click():
     """Аппаратный клик через SendInput, пробивающий системные окна и osk.exe"""
@@ -40,9 +44,9 @@ def win32_click():
     inp_down.type = INPUT_MOUSE
     inp_down.mi.dwFlags = MOUSEEVENTF_LEFTDOWN
     user32.SendInput(1, ctypes.byref(inp_down), ctypes.sizeof(INPUT))
-    
+
     time.sleep(0.06)
-    
+
     inp_up = INPUT()
     inp_up.type = INPUT_MOUSE
     inp_up.mi.dwFlags = MOUSEEVENTF_LEFTUP
@@ -60,20 +64,20 @@ class VisionTracker:
             max_num_faces=1,
             refine_landmarks=True,
             min_detection_confidence=0.45,
-            min_tracking_confidence=0.45
+            min_tracking_confidence=0.45,
         )
-        
+
         self.cur_x = float(self.screen_w // 2)
         self.cur_y = float(self.screen_h // 2)
         self.accum_drift_x = 0.0
         self.accum_drift_y = 0.0
-        
+
         # Сглаживание и джойстик-зона
         self.smoothing = 0.26
         self.edge_threshold_x = 0.07
         self.edge_threshold_y = 0.06
         self.drift_speed = 18.0
-        
+
         # Автокалибровка
         self.calibration_ear = []
         self.calibration_nose_x = []
@@ -82,11 +86,11 @@ class VisionTracker:
         self.center_y = 0.55
         self.blink_threshold = 0.15
         self.is_calibrated = False
-        
+
         # Debounce кликов левым глазом
         self.left_eye_was_closed = False
         self.last_click_time = 0.0
-        
+
         # Ассистент (> 1.5 сек удержания обоих глаз)
         self.eyes_closed_start = None
         self.assistant_triggered = False
@@ -102,7 +106,7 @@ class VisionTracker:
         bot = np.array([landmarks[bot_idx].x, landmarks[bot_idx].y])
         left = np.array([landmarks[left_idx].x, landmarks[left_idx].y])
         right = np.array([landmarks[right_idx].x, landmarks[right_idx].y])
-        
+
         v = np.linalg.norm(top - bot)
         h = np.linalg.norm(left - right)
         return v / (h + 1e-6)
@@ -111,16 +115,16 @@ class VisionTracker:
         """Нелинейная кривая: высокая точность в центре + комфортный ход к краям"""
         sign = 1.0 if offset >= 0 else -1.0
         abs_off = abs(offset)
-        
+
         # Зона мелких точных движений
         if abs_off < 0.015:
             return offset * 0.9
-            
+
         if is_upward:
-            scaled = (abs_off ** 1.25) * 2.3
+            scaled = (abs_off**1.25) * 2.3
             return sign * scaled
         else:
-            scaled = (abs_off ** 1.15) * 1.9
+            scaled = (abs_off**1.15) * 1.9
             return sign * scaled
 
     def process_frame(self, frame, on_assistant_trigger=None, on_shutdown_trigger=None):
@@ -150,7 +154,9 @@ class VisionTracker:
                 self.center_x = float(np.median(self.calibration_nose_x))
                 self.center_y = float(np.median(self.calibration_nose_y))
                 self.is_calibrated = True
-                print(f"[КАЛИБРОВКА] Центр лица: ({self.center_x:.3f}, {self.center_y:.3f}) | Порог глаз: {self.blink_threshold:.4f}")
+                print(
+                    f"[КАЛИБРОВКА] Центр лица: ({self.center_x:.3f}, {self.center_y:.3f}) | Порог глаз: {self.blink_threshold:.4f}"
+                )
             return
 
         left_closed = left_ear < self.blink_threshold
@@ -163,7 +169,9 @@ class VisionTracker:
                 self.both_eyes_was_closed = True
                 self.last_blink_registered = now
                 self.blink_timestamps.append(now)
-                self.blink_timestamps = [t for t in self.blink_timestamps if now - t <= self.max_blink_window]
+                self.blink_timestamps = [
+                    t for t in self.blink_timestamps if now - t <= self.max_blink_window
+                ]
                 print(f"[ДЕТЕКТОР] Моргание: {len(self.blink_timestamps)}/4")
 
                 if len(self.blink_timestamps) >= 4:

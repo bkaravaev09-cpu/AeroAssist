@@ -1,7 +1,9 @@
+import subprocess
+import webbrowser
+
 import pyttsx3
 import speech_recognition as sr
-import webbrowser
-import subprocess
+
 
 class PolishVoiceAssistant:
     def __init__(self):
@@ -11,12 +13,16 @@ class PolishVoiceAssistant:
 
     def _get_engine(self):
         engine = pyttsx3.init()
-        voices = engine.getProperty('voices')
+        voices = engine.getProperty("voices")
         for voice in voices:
-            if "polish" in voice.name.lower() or "pl" in voice.id.lower() or "paulina" in voice.name.lower():
-                engine.setProperty('voice', voice.id)
+            if (
+                "polish" in voice.name.lower()
+                or "pl" in voice.id.lower()
+                or "paulina" in voice.name.lower()
+            ):
+                engine.setProperty("voice", voice.id)
                 break
-        engine.setProperty('rate', 155)
+        engine.setProperty("rate", 155)
         return engine
 
     def speak(self, text):
@@ -40,7 +46,7 @@ class PolishVoiceAssistant:
                 self.recognizer.adjust_for_ambient_noise(source, duration=0.5)
                 print("[МИКРОФОН]: Говорите команду...")
                 audio = self.recognizer.listen(source, timeout=5, phrase_time_limit=5)
-                
+
                 print("[МИКРОФОН]: Распознавание польской речи...")
                 command = self.recognizer.recognize_google(audio, language="pl-PL").lower().strip()
                 print(f"[РАСПОЗНАНО]: '{command}'")
@@ -58,7 +64,12 @@ class PolishVoiceAssistant:
     def _dispatch(self, cmd):
         # 1. Поиск информации в Google
         if "szukaj" in cmd or "znajdź" in cmd:
-            query = cmd.replace("szukaj w google", "").replace("szukaj", "").replace("znajdź", "").strip()
+            query = (
+                cmd.replace("szukaj w google", "")
+                .replace("szukaj", "")
+                .replace("znajdź", "")
+                .strip()
+            )
             self.speak(f"Szukam w Google: {query}")
             webbrowser.open(f"https://www.google.com/search?q={query}")
 
@@ -72,7 +83,9 @@ class PolishVoiceAssistant:
             webbrowser.open("https://google.pl")
 
         # 3. Управление экранной клавиатурой
-        elif "zamknij klawiaturę" in cmd or "schowaj klawiaturę" in cmd or "wyłącz klawiaturę" in cmd:
+        elif (
+            "zamknij klawiaturę" in cmd or "schowaj klawiaturę" in cmd or "wyłącz klawiaturę" in cmd
+        ):
             self.speak("Zamykam klawiaturę")
             try:
                 # Закрываем стандартную osk и современную сенсорную клавиатуру
@@ -86,20 +99,22 @@ class PolishVoiceAssistant:
             try:
                 subprocess.Popen("cmd.exe /c start osk.exe", shell=True)
             except Exception as e:
-                print(f"[ОШИБКА ЗАПУСКА КЛАВИАТУРЫ]: {e}")  
+                print(f"[ОШИБКА ЗАПУСКА КЛАВИАТУРЫ]: {e}")
 
         # 4. Переключение и управление окнами (Alt+Tab, свернуть всё)
         elif "przełącz" in cmd or "zmień okno" in cmd or "następne" in cmd:
             self.speak("Przełączam okno")
             # Эмуляция Alt+Tab для смены активного окна
             import pyautogui
-            pyautogui.hotkey('alt', 'tab')
+
+            pyautogui.hotkey("alt", "tab")
 
         elif "pulpit" in cmd or "zminimalizuj" in cmd:
             self.speak("Pokazuję pulpit")
             # Свернуть все окна (Win + D)
             import pyautogui
-            pyautogui.hotkey('win', 'd')
+
+            pyautogui.hotkey("win", "d")
 
         # 5. Инструменты Windows
         elif "notatnik" in cmd:
