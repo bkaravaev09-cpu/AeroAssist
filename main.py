@@ -1,6 +1,7 @@
 import logging
 import queue
 import threading
+import time
 import winsound
 
 import customtkinter as ctk
@@ -8,6 +9,7 @@ import cv2
 
 from core.vision_tracker import VisionTracker
 from core.voice_assistant import PolishVoiceAssistant
+from ui.camera_preview import CameraPreview, LatestFrameBuffer, PreviewFrame
 
 logger = logging.getLogger(__name__)
 
@@ -16,8 +18,10 @@ class AeroAssistApp(ctk.CTk):
     def __init__(self):
         super().__init__()
         self.title("AeroAssist - Sterowanie komputerem")
-        self.geometry("440x540")
-        self.resizable(False, False)
+        available_height = int(self.winfo_screenheight() / self._get_window_scaling()) - 80
+        self.geometry(f"580x{max(480, min(780, available_height))}")
+        self.minsize(360, 480)
+        self.resizable(True, True)
         ctk.set_appearance_mode("dark")
 
         self.tracker = VisionTracker()
@@ -26,6 +30,7 @@ class AeroAssistApp(ctk.CTk):
         self._stop_event = threading.Event()
         self._stop_event.set()
         self._worker_events = queue.Queue()
+        self._preview_frames = LatestFrameBuffer()
         self._session_id = 0
         self._tracking_state = "stopped"
         self._tracking_error = None
@@ -41,11 +46,17 @@ class AeroAssistApp(ctk.CTk):
         self.after(50, self._poll_worker_events)
 
     def _build_ui(self):
-        self.label_title = ctk.CTkLabel(self, text="AeroAssist System", font=("Arial", 22, "bold"))
-        self.label_title.pack(pady=20)
+        content = ctk.CTkScrollableFrame(self)
+        content.pack(fill="both", expand=True)
+        self.label_title = ctk.CTkLabel(
+            content, text="AeroAssist System", font=("Arial", 22, "bold")
+        )
+        self.label_title.pack(pady=12)
+        self.preview = CameraPreview(content)
+        self.preview.pack(padx=12, pady=(0, 8), fill="x")
 
         self.btn_toggle = ctk.CTkButton(
-            self,
+            content,
             text="Uruchom sterowanie",
             command=self.toggle_system,
             height=45,
@@ -54,18 +65,24 @@ class AeroAssistApp(ctk.CTk):
         self.btn_toggle.pack(pady=10, padx=40, fill="x")
 
         self.label_status = ctk.CTkLabel(
-            self, text="Status: Zatrzymany", text_color="gray", font=("Arial", 13)
+            content,
+            text="Status: Zatrzymany",
+            text_color="gray",
+            font=("Arial", 13),
+            wraplength=300,
         )
         self.label_status.pack(pady=5)
 
-        self.label_sens = ctk.CTkLabel(self, text="Czułość ruchów (Sensitivity):")
+        self.label_sens = ctk.CTkLabel(content, text="Czułość ruchów (Sensitivity):")
         self.label_sens.pack(pady=(15, 0))
 
-        self.slider_sens = ctk.CTkSlider(self, from_=1.0, to=3.0, command=self.change_sensitivity)
+        self.slider_sens = ctk.CTkSlider(
+            content, from_=1.0, to=3.0, command=self.change_sensitivity
+        )
         self.slider_sens.set(1.9)
         self.slider_sens.pack(pady=8, padx=40, fill="x")
 
-        self.info_box = ctk.CTkTextbox(self, height=140)
+        self.info_box = ctk.CTkTextbox(content, height=140, wrap="word")
         self.info_box.pack(pady=15, padx=30, fill="x")
         self.info_box.insert(
             "0.0",
@@ -121,6 +138,8 @@ class AeroAssistApp(ctk.CTk):
             logger.debug("Pause notification sound unavailable", exc_info=True)
 
     def _set_stopped_state(self):
+        self._preview_frames.clear()
+        self.preview.reset(self._tracking_error or "Kamera nieaktywna")
         self._tracking_state = "stopped"
         self.btn_toggle.configure(
             text="Uruchom sterowanie",
@@ -135,6 +154,8 @@ class AeroAssistApp(ctk.CTk):
 
     def _request_stop(self):
         self._stop_event.set()
+        self._preview_frames.clear()
+        self.preview.reset()
         self._tracking_state = "stopping"
         self.btn_toggle.configure(text="Zatrzymywanie…", state="disabled")
         self.label_status.configure(text="Status: Zatrzymywanie kamery…", text_color="orange")
@@ -149,6 +170,8 @@ class AeroAssistApp(ctk.CTk):
         if self._tracking_state == "stopping" or self.camera_thread is not None:
             return
         self._session_id += 1
+        self._preview_frames.clear()
+        self.preview.reset("Uruchamianie kamery…")
         self._stop_event = threading.Event()
         self._tracking_error = None
         self._worker_finished = False
@@ -202,6 +225,10 @@ class AeroAssistApp(ctk.CTk):
                 return
             self._worker_events.put((session_id, "started", None))
             failures = 0
+            last_preview = 0.0
+            fps_started = time.monotonic()
+            frame_count = 0
+            fps = 0.0
             while not stop_event.is_set():
                 error_message = "Utracono połączenie z kamerą. Sprawdź kamerę i uruchom ponownie."
                 ret, frame = cap.read()
@@ -221,6 +248,19 @@ class AeroAssistApp(ctk.CTk):
                     on_assistant_trigger=self.trigger_assistant,
                     on_shutdown_trigger=self.pause_tracking_from_gesture,
                 )
+                frame_count += 1
+                now = time.monotonic()
+                elapsed = now - fps_started
+                if elapsed >= 0.5:
+                    fps = frame_count / elapsed
+                    fps_started, frame_count = now, 0
+                if not stop_event.is_set() and now - last_preview >= 1 / 15:
+                    last_preview = now
+                    try:
+                        self._publish_preview(session_id, frame, fps, now)
+                    except Exception:
+                        # Preview failures must not disable gesture recognition.
+                        logger.exception("Unable to prepare preview frame")
         except Exception:
             logger.exception("Camera session %s failed", session_id)
             if not stop_event.is_set():
@@ -230,6 +270,14 @@ class AeroAssistApp(ctk.CTk):
                 self._release_camera(cap)
             stop_event.set()
             self._worker_events.put((session_id, "stopped", None))
+
+    def _publish_preview(self, session_id, frame, fps, captured_at):
+        height, width = frame.shape[:2]
+        scale = min(1.0, 640 / width, 360 / height)
+        small = cv2.resize(frame, (max(1, int(width * scale)), max(1, int(height * scale))))
+        self._preview_frames.publish(
+            PreviewFrame(session_id, small, self.tracker.get_preview_landmarks(), fps, captured_at)
+        )
 
     def _poll_worker_events(self):
         """Tk schedules this poll; workers use Queue.put and never Tk.after."""
@@ -256,6 +304,8 @@ class AeroAssistApp(ctk.CTk):
                 self._request_stop()
             elif kind == "error":
                 self._tracking_error = message
+                self._preview_frames.clear()
+                self.preview.reset(message)
                 self.label_status.configure(text=message, text_color="orange")
             elif kind == "assistant" and not self._stop_event.is_set():
                 self._start_assistant()
@@ -274,6 +324,20 @@ class AeroAssistApp(ctk.CTk):
                 self._set_stopped_state()
         if self._closing:
             self._finish_close()
+        if not self._closing:
+            packet = self._preview_frames.take()
+            if (
+                packet is not None
+                and packet.session_id == self._session_id
+                and not self._stop_event.is_set()
+                and time.monotonic() - packet.captured_at <= 1.0
+            ):
+                try:
+                    self.preview.show_frame(packet)
+                except Exception:
+                    logger.exception("Unable to display preview frame")
+                    self.preview.reset("Nie można wyświetlić podglądu kamery")
+            self.preview.expire()
         if not self._closed:
             self.after(50, self._poll_worker_events)
 
@@ -291,6 +355,8 @@ class AeroAssistApp(ctk.CTk):
         if any(worker is not None and worker.is_alive() for worker in workers):
             return
         self._closed = True
+        self._preview_frames.clear()
+        self.preview.reset()
         try:
             self.tracker.face_mesh.close()
         except Exception:

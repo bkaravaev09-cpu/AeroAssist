@@ -81,10 +81,15 @@ def test_left_wink_click_is_debounced(tracker):
 
 
 def test_no_face_produces_no_cursor_action(tracker):
+    tracker.process_frame(object())
+    assert len(tracker.get_preview_landmarks()) == 468
+    tracker.face_mesh.process.reset_mock()
     tracker.face_mesh.process.return_value.multi_face_landmarks = None
     with patch.object(vision, "win32_move") as move:
         tracker.process_frame(object())
         move.assert_not_called()
+    assert tracker.get_preview_landmarks() == ()
+    tracker.face_mesh.process.assert_called_once()
 
 
 def test_calibration_uses_25_frames(tracker):
