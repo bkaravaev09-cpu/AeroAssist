@@ -34,9 +34,11 @@ worker exclusion; camera and processing failures; eye gestures and callback
 debouncing; sensitivity assignment and mouse smoothing; voice activation,
 session exclusion and errors; and shutdown resource ordering.
 
-The sensitivity test covers the existing slider-to-tracker assignment. The current
-vision movement algorithm does not consume that attribute; changing its behavior
-is outside this testing setup.
+Cursor tests cover the slider-to-controller integration, EMA calculations, dead
+zone accumulation, boundary clamping, step limits, head-tilt edge movement, invalid
+input, loss/restart continuity, and concurrent setting changes. Sensitivity now
+affects actual movement. See `docs/cursor-smoothing.md` for defaults, the algorithm,
+synthetic before/after measurements, and physical-device test requirements.
 
 Shutdown keeps the GUI event loop available while existing workers finish before
 closing FaceMesh and the window. Device drivers or speech services that block
