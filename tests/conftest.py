@@ -24,11 +24,12 @@ def app():
     instance.resizable = MagicMock()
     instance.protocol = MagicMock()
     instance._build_ui = MagicMock()
+    instance.after = MagicMock()
     instance.__init__()
     instance.btn_toggle = MagicMock()
     instance.label_status = MagicMock()
     instance.tracker = MagicMock()
     instance.assistant = MagicMock()
-    instance.after = MagicMock()
+    instance.after.reset_mock()
     instance.destroy = MagicMock()
     return instance
