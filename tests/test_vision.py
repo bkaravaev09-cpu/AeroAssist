@@ -43,6 +43,25 @@ def test_four_fast_blinks_pause_tracking(tracker):
     callback.assert_called_once()
 
 
+def test_four_blinks_stop_camera_session_and_allow_restart(tracker, app):
+    app._stop_event.clear()
+    app._tracking_state = "running"
+    app.camera_thread = MagicMock()
+    app.camera_thread.is_alive.return_value = False
+    for now in (10, 10.5, 11, 11.5):
+        frame(tracker, now, 0.05, 0.05, pause=app.pause_tracking_from_gesture)
+        frame(tracker, now + 0.1, 0.3, 0.3)
+    assert app._stop_event.is_set()
+    app.label_status.configure.assert_not_called()
+    app._worker_events.put((app._session_id, "stopped", None))
+    app._poll_worker_events()
+    assert app._tracking_state == "stopped"
+    with patch("main.threading.Thread") as thread:
+        app.toggle_system()
+    thread.return_value.start.assert_called_once()
+    assert not app._stop_event.is_set()
+
+
 def test_slow_blinks_do_not_pause(tracker):
     callback = MagicMock()
     for now in (10, 14, 18, 22):

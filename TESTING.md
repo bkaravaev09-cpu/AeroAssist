@@ -25,7 +25,9 @@ Windows sound, PyAutoGUI, and text-to-speech before application imports. Voice
 tests patch the microphone, recognizer, and browser. NumPy and the application's
 gesture logic remain real. No GUI window, device, speech service, browser, or
 desktop automation is needed. Gesture tests use synthetic landmarks and a mocked
-clock; worker tests control thread state rather than depending on timing.
+clock. Worker tests cover deterministic state transitions and use real threads
+with synchronization Events to hold camera release open during rapid clicks and
+shutdown, without depending on sleep-based timing.
 
 Tests cover camera initialization, fallback and release; tracking start/stop and
 worker exclusion; camera and processing failures; eye gestures and callback
@@ -40,6 +42,32 @@ Shutdown keeps the GUI event loop available while existing workers finish before
 closing FaceMesh and the window. Device drivers or speech services that block
 indefinitely can delay shutdown. These unit tests do not establish physical-device
 behavior, recognition accuracy, or real desktop compatibility.
+
+## Camera lifecycle manual test plan
+
+Run these checks on Windows with a real webcam; they are not automated hardware
+verification:
+
+1. Start tracking, wait for the active status, then stop. Confirm the camera LED
+   goes off and the start button becomes available after cleanup.
+2. Rapidly click start/stop, including while the camera is opening. Confirm the
+   interface stays responsive and a new session starts only after stopping ends.
+3. Start without a webcam (or with camera permission denied). Confirm a Polish
+   error appears and reconnecting the camera allows a new attempt.
+4. Disconnect the webcam while tracking. Confirm tracking stops with a Polish
+   error instead of retrying forever; reconnect and restart.
+5. Blink both eyes four times quickly. Confirm tracking pauses, then restart.
+   Verify the left-eye click and long-eye-closure voice trigger still work.
+6. Close while opening, tracking, stopping, or listening to a voice command.
+   Confirm no new session can start, the interface continues processing events,
+   and the window closes after workers finish and resources are released.
+
+The GUI polls a session-tagged queue every 50 ms. Each camera session owns its
+stop Event and capture, and only its worker calls OpenCV camera methods. Up to
+two failed reads are retried with an interruptible delay; the third consecutive
+failure ends the session. Stop disables restart until the completion event is
+received and the old thread has exited. Technical failures are logged with
+tracebacks; camera errors remain visible in the Polish status label until retry.
 
 ## GitHub Actions and merge protection
 
