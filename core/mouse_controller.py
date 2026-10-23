@@ -3,6 +3,7 @@ import pyautogui
 # Отключаем сбой при попадании курсора в угол экрана
 pyautogui.FAILSAFE = False
 
+
 class MouseController:
     def __init__(self, smoothing_factor=0.25):
         self.screen_w, self.screen_h = pyautogui.size()
@@ -20,5 +21,5 @@ class MouseController:
         pyautogui.moveTo(curr_x, curr_y)
         self.prev_x, self.prev_y = curr_x, curr_y
 
-    def click(self, button='left'):
+    def click(self, button="left"):
         pyautogui.click(button=button)

@@ -5,3 +5,6 @@ build/
 dist/
 *.spec
 .vscode/
+.venv/
+.pytest_cache/
+.ruff_cache/
