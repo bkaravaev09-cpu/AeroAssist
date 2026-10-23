@@ -1,10 +1,13 @@
 import ctypes
+import math
 import time
 from ctypes import wintypes
 
 import cv2
 import mediapipe as mp
 import numpy as np
+
+from core.cursor_controller import CursorController
 
 # ----------------- Win32 API & SendInput -----------------
 user32 = ctypes.windll.user32
@@ -67,18 +70,8 @@ class VisionTracker:
             min_tracking_confidence=0.45,
         )
 
-        self.cur_x = float(self.screen_w // 2)
-        self.cur_y = float(self.screen_h // 2)
-        self.accum_drift_x = 0.0
-        self.accum_drift_y = 0.0
+        self.cursor_controller = CursorController(self.screen_w, self.screen_h)
 
-        # Сглаживание и джойстик-зона
-        self.smoothing = 0.26
-        self.edge_threshold_x = 0.07
-        self.edge_threshold_y = 0.06
-        self.drift_speed = 18.0
-
-        # Автокалибровка
         self.calibration_ear = []
         self.calibration_nose_x = []
         self.calibration_nose_y = []
@@ -118,21 +111,19 @@ class VisionTracker:
         h = np.linalg.norm(left - right)
         return v / (h + 1e-6)
 
-    def _apply_curve(self, offset, is_upward=False):
-        """Нелинейная кривая: высокая точность в центре + комфортный ход к краям"""
-        sign = 1.0 if offset >= 0 else -1.0
-        abs_off = abs(offset)
+    @property
+    def sensitivity(self):
+        return self.cursor_controller.settings.sensitivity
 
-        # Зона мелких точных движений
-        if abs_off < 0.015:
-            return offset * 0.9
+    @sensitivity.setter
+    def sensitivity(self, value):
+        self.cursor_controller.configure(sensitivity=value)
 
-        if is_upward:
-            scaled = (abs_off**1.25) * 2.3
-            return sign * scaled
-        else:
-            scaled = (abs_off**1.15) * 1.9
-            return sign * scaled
+    def configure_cursor(self, **changes):
+        self.cursor_controller.configure(**changes)
+
+    def reset_cursor(self):
+        self.cursor_controller.reset()
 
     def process_frame(self, frame, on_assistant_trigger=None, on_shutdown_trigger=None):
         frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
@@ -140,6 +131,7 @@ class VisionTracker:
         self._preview_landmarks = None
 
         if not results.multi_face_landmarks:
+            self.reset_cursor()
             return
 
         landmarks = results.multi_face_landmarks[0].landmark
@@ -147,6 +139,12 @@ class VisionTracker:
         now = time.time()
 
         nose = landmarks[4]
+        if not all(
+            isinstance(value, (int, float)) and math.isfinite(value) and 0.0 <= value <= 1.0
+            for value in (nose.x, nose.y)
+        ):
+            self.reset_cursor()
+            return
         left_ear = self.calculate_ear(landmarks, 159, 145, 33, 133)
         right_ear = self.calculate_ear(landmarks, 386, 374, 362, 263)
         avg_ear = (left_ear + right_ear) / 2.0
@@ -206,57 +204,9 @@ class VisionTracker:
             self.assistant_triggered = False
 
         # 4. Движение курсора
-        raw_offset_x = nose.x - self.center_x
-        raw_offset_y = nose.y - self.center_y
-
-        norm_curve_x = self._apply_curve(raw_offset_x, is_upward=False)
-        norm_curve_y = self._apply_curve(raw_offset_y, is_upward=(raw_offset_y < 0))
-
-        # Доводка джойстиком при наклонах головы
-        if abs(raw_offset_x) > self.edge_threshold_x:
-            sign = 1 if raw_offset_x > 0 else -1
-            strength = (abs(raw_offset_x) - self.edge_threshold_x) / 0.07
-            self.accum_drift_x += sign * self.drift_speed * max(1.0, strength)
-        else:
-            self.accum_drift_x *= 0.85
-
-        if abs(raw_offset_y) > self.edge_threshold_y:
-            sign = 1 if raw_offset_y > 0 else -1
-            strength = (abs(raw_offset_y) - self.edge_threshold_y) / 0.07
-            self.accum_drift_y += sign * self.drift_speed * max(1.0, strength)
-        else:
-            self.accum_drift_y *= 0.85
-
-        base_x = norm_curve_x * self.screen_w + self.screen_w / 2
-        base_y = norm_curve_y * self.screen_h + self.screen_h / 2
-
-        target_x = base_x + self.accum_drift_x
-        target_y = base_y + self.accum_drift_y
-
-        # Обрезка дрейфа за экраном
-        if target_x < 0:
-            target_x = 0.0
-            self.accum_drift_x = -base_x
-        elif target_x > self.screen_w - 1:
-            target_x = float(self.screen_w - 1)
-            self.accum_drift_x = (self.screen_w - 1) - base_x
-
-        # Обработка выдвижной нижней панели задач Windows
-        if target_y >= self.screen_h - 4:
-            target_y = float(self.screen_h - 1)
-            self.accum_drift_y = (self.screen_h - 1) - base_y
-        elif target_y < 0:
-            target_y = 0.0
-            self.accum_drift_y = -base_y
-
-        self.cur_x += (target_x - self.cur_x) * self.smoothing
-        self.cur_y += (target_y - self.cur_y) * self.smoothing
-
-        send_y = int(self.cur_y)
-        if target_y >= self.screen_h - 2 and (self.screen_h - 1 - send_y) < 15:
-            send_y = self.screen_h - 1
-
-        win32_move(int(self.cur_x), send_y)
+        position = self.cursor_controller.update_head(nose.x, nose.y, self.center_x, self.center_y)
+        if position is not None:
+            win32_move(round(position[0]), round(position[1]))
 
         # 5. Одиночный клик левым глазом (SendInput)
         if left_closed and not right_closed:

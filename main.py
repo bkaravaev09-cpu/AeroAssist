@@ -7,6 +7,7 @@ import winsound
 import customtkinter as ctk
 import cv2
 
+from core.cursor_controller import DEFAULT_CURSOR_SETTINGS
 from core.vision_tracker import VisionTracker
 from core.voice_assistant import PolishVoiceAssistant
 from ui.camera_preview import CameraPreview, LatestFrameBuffer, PreviewFrame
@@ -73,14 +74,30 @@ class AeroAssistApp(ctk.CTk):
         )
         self.label_status.pack(pady=5)
 
-        self.label_sens = ctk.CTkLabel(content, text="Czułość ruchów (Sensitivity):")
+        self.label_sens = ctk.CTkLabel(content, text="Czułość kursora")
         self.label_sens.pack(pady=(15, 0))
 
         self.slider_sens = ctk.CTkSlider(
             content, from_=1.0, to=3.0, command=self.change_sensitivity
         )
-        self.slider_sens.set(1.9)
+        self.slider_sens.set(DEFAULT_CURSOR_SETTINGS.sensitivity)
         self.slider_sens.pack(pady=8, padx=40, fill="x")
+
+        ctk.CTkLabel(content, text="Wygładzanie ruchu (więcej = płynniej)").pack(pady=(8, 0))
+        self.slider_smoothing = ctk.CTkSlider(
+            content, from_=0.0, to=0.95, command=self.change_smoothing
+        )
+        self.slider_smoothing.set(DEFAULT_CURSOR_SETTINGS.smoothing)
+        self.slider_smoothing.pack(pady=8, padx=40, fill="x")
+        ctk.CTkLabel(content, text="Strefa martwa (0–10 pikseli)").pack(pady=(8, 0))
+        self.slider_dead_zone = ctk.CTkSlider(
+            content, from_=0.0, to=10.0, command=self.change_dead_zone
+        )
+        self.slider_dead_zone.set(DEFAULT_CURSOR_SETTINGS.dead_zone)
+        self.slider_dead_zone.pack(pady=8, padx=40, fill="x")
+        ctk.CTkButton(
+            content, text="Przywróć ustawienia domyślne", command=self.reset_cursor_settings
+        ).pack(pady=8, padx=40, fill="x")
 
         self.info_box = ctk.CTkTextbox(content, height=140, wrap="word")
         self.info_box.pack(pady=15, padx=30, fill="x")
@@ -97,6 +114,23 @@ class AeroAssistApp(ctk.CTk):
 
     def change_sensitivity(self, val):
         self.tracker.sensitivity = float(val)
+
+    def change_smoothing(self, val):
+        self.tracker.configure_cursor(smoothing=float(val))
+
+    def change_dead_zone(self, val):
+        self.tracker.configure_cursor(dead_zone=float(val))
+
+    def reset_cursor_settings(self):
+        defaults = DEFAULT_CURSOR_SETTINGS
+        self.tracker.configure_cursor(
+            sensitivity=defaults.sensitivity,
+            smoothing=defaults.smoothing,
+            dead_zone=defaults.dead_zone,
+        )
+        self.slider_sens.set(defaults.sensitivity)
+        self.slider_smoothing.set(defaults.smoothing)
+        self.slider_dead_zone.set(defaults.dead_zone)
 
     def trigger_assistant(self):
         """Called by the camera worker; never call Tk from this boundary."""
@@ -220,6 +254,7 @@ class AeroAssistApp(ctk.CTk):
         cap = None
         error_message = "Nie można otworzyć kamery. Sprawdź połączenie i uprawnienia."
         try:
+            self.tracker.reset_cursor()
             cap = self._open_camera(stop_event)
             if cap is None or stop_event.is_set():
                 return
@@ -268,6 +303,10 @@ class AeroAssistApp(ctk.CTk):
         finally:
             if cap is not None:
                 self._release_camera(cap)
+            try:
+                self.tracker.reset_cursor()
+            except Exception:
+                logger.exception("Unable to reset cursor after tracking")
             stop_event.set()
             self._worker_events.put((session_id, "stopped", None))
 

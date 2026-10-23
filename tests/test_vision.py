@@ -99,3 +99,65 @@ def test_calibration_uses_25_frames(tracker):
     assert tracker.is_calibrated
     assert tracker.blink_threshold == pytest.approx(0.195)
     assert tracker.center_x == 0.5
+
+
+def test_vision_routes_head_position_to_cursor_controller(tracker):
+    with (
+        patch.object(
+            tracker.cursor_controller, "update_head", return_value=(120.4, 180.7)
+        ) as update,
+        patch.object(vision, "win32_move") as move,
+    ):
+        tracker.process_frame(object())
+    update.assert_called_once_with(0.5, 0.55, 0.5, 0.55)
+    move.assert_called_once_with(120, 181)
+
+
+def test_sensitivity_property_controls_actual_movement(tracker):
+    nose = SimpleNamespace(x=0.5, y=0.55)
+    tracker.face_mesh.process.return_value.multi_face_landmarks[0].landmark = [nose] * 468
+    tracker.sensitivity = 1.0
+    tracker.process_frame(object())
+    nose.x = 0.53
+    tracker.process_frame(object())
+    low_distance = tracker.cursor_controller.position[0] - 960
+    from core.cursor_controller import CursorController
+
+    tracker.cursor_controller = CursorController(1920, 1080)
+    tracker.sensitivity = 3.0
+    nose.x = 0.5
+    tracker.process_frame(object())
+    nose.x = 0.53
+    tracker.process_frame(object())
+    high_distance = tracker.cursor_controller.position[0] - 960
+    assert high_distance == pytest.approx(low_distance * 3)
+
+
+def test_no_face_holds_position_and_reacquisition_does_not_jump(tracker):
+    results = tracker.face_mesh.process.return_value
+    detected = results.multi_face_landmarks
+    tracker.process_frame(object())
+    detected[0].landmark = [SimpleNamespace(x=0.55, y=0.55)] * 468
+    tracker.process_frame(object())
+    position = tracker.cursor_controller.position
+    results.multi_face_landmarks = None
+    with patch.object(vision, "win32_move") as move:
+        tracker.process_frame(object())
+        move.assert_not_called()
+    assert tracker.cursor_controller.position == position
+    detected[0].landmark = [SimpleNamespace(x=0.4, y=0.55)] * 468
+    results.multi_face_landmarks = detected
+    tracker.process_frame(object())
+    assert tracker.cursor_controller.position == position
+
+
+@pytest.mark.parametrize("invalid", [float("nan"), float("inf"), -0.1, 1.1, None])
+def test_invalid_nose_does_not_move_or_poison_calibration(tracker, invalid):
+    tracker.is_calibrated = False
+    tracker.face_mesh.process.return_value.multi_face_landmarks[0].landmark = [
+        SimpleNamespace(x=invalid, y=0.55)
+    ] * 468
+    with patch.object(vision, "win32_move") as move:
+        tracker.process_frame(object())
+        move.assert_not_called()
+    assert tracker.calibration_nose_x == []

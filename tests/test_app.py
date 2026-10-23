@@ -62,6 +62,7 @@ def test_camera_lifecycle(app, failure, caplog):
             capture.side_effect = RuntimeError("camera unavailable")
         app._worker_loop(session, stop)
     assert stop.is_set()
+    assert app.tracker.reset_cursor.call_count == 2
     assert camera.release.call_count == (
         0 if failure == "construct" else 2 if failure == "open" else 1
     )
@@ -169,6 +170,25 @@ def test_release_error_still_signals_completion(app, caplog):
 def test_sensitivity_configuration(app):
     app.change_sensitivity("2.5")
     assert app.tracker.sensitivity == 2.5
+
+
+def test_cursor_controls_configure_independently_and_restore_defaults(app):
+    from core.cursor_controller import DEFAULT_CURSOR_SETTINGS
+
+    app.change_smoothing("0.85")
+    app.tracker.configure_cursor.assert_called_with(smoothing=0.85)
+    app.change_dead_zone("4")
+    app.tracker.configure_cursor.assert_called_with(dead_zone=4.0)
+    app.reset_cursor_settings()
+    defaults = DEFAULT_CURSOR_SETTINGS
+    app.tracker.configure_cursor.assert_called_with(
+        sensitivity=defaults.sensitivity,
+        smoothing=defaults.smoothing,
+        dead_zone=defaults.dead_zone,
+    )
+    app.slider_sens.set.assert_called_once_with(defaults.sensitivity)
+    app.slider_smoothing.set.assert_called_once_with(defaults.smoothing)
+    app.slider_dead_zone.set.assert_called_once_with(defaults.dead_zone)
 
 
 def test_stale_session_events_do_not_change_current_state(app):
