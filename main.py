@@ -7,9 +7,11 @@ import winsound
 import customtkinter as ctk
 import cv2
 
+from core.calibration import CalibrationManager, HeadSample
 from core.cursor_controller import DEFAULT_CURSOR_SETTINGS
 from core.vision_tracker import VisionTracker
 from core.voice_assistant import PolishVoiceAssistant
+from ui.calibration_window import CalibrationWindow
 from ui.camera_preview import CameraPreview, LatestFrameBuffer, PreviewFrame
 
 logger = logging.getLogger(__name__)
@@ -27,6 +29,11 @@ class AeroAssistApp(ctk.CTk):
 
         self.tracker = VisionTracker()
         self.assistant = PolishVoiceAssistant()
+        self.calibration_manager = CalibrationManager()
+        self.tracker.apply_calibration(self.calibration_manager.load())
+        self.calibration_window = None
+        self._calibration_open = threading.Event()
+        self._calibration_samples = LatestFrameBuffer()
 
         self._stop_event = threading.Event()
         self._stop_event.set()
@@ -111,6 +118,93 @@ class AeroAssistApp(ctk.CTk):
             "• 4 szybkie mrugnięcia — zatrzymanie / pauza śledzenia",
         )
         self.info_box.configure(state="disabled")
+
+        ctk.CTkLabel(content, text="Kalibracja kursora", font=("Arial", 16, "bold")).pack(
+            pady=(12, 4)
+        )
+        self.label_calibration = ctk.CTkLabel(
+            content,
+            text=("Kalibracja aktywna" if self.calibration_manager.active else "Nie skalibrowano"),
+        )
+        self.label_calibration.pack(pady=4)
+        ctk.CTkButton(content, text="Rozpocznij kalibrację", command=self.open_calibration).pack(
+            pady=4
+        )
+        ctk.CTkButton(content, text="Powtórz kalibrację", command=self.open_calibration).pack(
+            pady=4
+        )
+        ctk.CTkButton(
+            content, text="Przywróć domyślne", command=self.restore_default_calibration
+        ).pack(pady=(4, 16))
+
+    def open_calibration(self):
+        if self._closing:
+            return
+        if self.calibration_window is not None:
+            self.calibration_window.lift()
+            return
+        self._calibration_open.set()
+        self.calibration_window = CalibrationWindow(
+            self,
+            self.calibration_manager,
+            on_begin=self._begin_calibration,
+            on_preview=self._preview_calibration,
+            on_save=self._save_calibration,
+            on_cancel=self._cancel_calibration,
+            on_reset=self._restore_calibration,
+            on_collect=self.tracker.set_calibration_collecting,
+        )
+
+    def _begin_calibration(self):
+        if self._closing or self._tracking_state == "stopping":
+            return False
+        self.tracker.apply_calibration(self.calibration_manager.active)
+        self.tracker.set_calibration_collecting(False)
+        self._calibration_samples.clear()
+        if self._tracking_state == "stopped":
+            self.toggle_system()
+        return self._tracking_state in ("starting", "running")
+
+    def _preview_calibration(self, parameters):
+        self.tracker.apply_calibration(parameters)
+        self.tracker.set_calibration_collecting(False)
+        self.label_calibration.configure(
+            text=("Kalibracja aktywna — podgląd" if parameters else "Nie skalibrowano")
+        )
+
+    def _end_calibration(self):
+        self.calibration_manager.begin()
+        self._calibration_open.clear()
+        self._calibration_samples.clear()
+        self.tracker.set_calibration_collecting(False)
+        self.tracker.apply_calibration(self.calibration_manager.active)
+        self.calibration_window = None
+        self.label_calibration.configure(
+            text=("Kalibracja aktywna" if self.calibration_manager.active else "Nie skalibrowano")
+        )
+
+    def _cancel_calibration(self):
+        self._end_calibration()
+
+    def _save_calibration(self, parameters):
+        self.calibration_manager.save(parameters)
+        self._end_calibration()
+        self.label_calibration.configure(text="Kalibracja zakończona — aktywna")
+
+    def _restore_calibration(self):
+        try:
+            self.calibration_manager.restore_defaults()
+        except OSError:
+            logger.exception("Unable to remove saved calibration")
+            self.label_calibration.configure(text="Nie można przywrócić domyślnej kalibracji.")
+            return False
+        self._end_calibration()
+        return True
+
+    def restore_default_calibration(self):
+        if self.calibration_window is not None:
+            self.calibration_window.cancel()
+        return self._restore_calibration()
 
     def change_sensitivity(self, val):
         self.tracker.sensitivity = float(val)
@@ -285,6 +379,10 @@ class AeroAssistApp(ctk.CTk):
                 )
                 frame_count += 1
                 now = time.monotonic()
+                if self._calibration_open.is_set():
+                    self._calibration_samples.publish(
+                        HeadSample(session_id, self.tracker.get_head_position(), now)
+                    )
                 elapsed = now - fps_started
                 if elapsed >= 0.5:
                     fps = frame_count / elapsed
@@ -363,6 +461,18 @@ class AeroAssistApp(ctk.CTk):
                 self._set_stopped_state()
         if self._closing:
             self._finish_close()
+        if self.calibration_window is not None and not self._closing:
+            sample = self._calibration_samples.take()
+            if self._stop_event.is_set():
+                self.calibration_window.tracking_unavailable(
+                    self._tracking_error or "Śledzenie wstrzymane. Powtórz punkt, aby wznowić."
+                )
+            elif (
+                sample is not None
+                and sample.session_id == self._session_id
+                and time.monotonic() - sample.captured_at <= 1
+            ):
+                self.calibration_window.receive_sample(sample)
         if not self._closing:
             packet = self._preview_frames.take()
             if (
@@ -383,6 +493,8 @@ class AeroAssistApp(ctk.CTk):
     def close(self):
         if self._closing:
             return
+        if self.calibration_window is not None:
+            self.calibration_window.cancel()
         self._closing = True
         self._request_stop()
         self._finish_close()

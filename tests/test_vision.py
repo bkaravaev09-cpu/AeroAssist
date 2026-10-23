@@ -161,3 +161,33 @@ def test_invalid_nose_does_not_move_or_poison_calibration(tracker, invalid):
         tracker.process_frame(object())
         move.assert_not_called()
     assert tracker.calibration_nose_x == []
+
+
+def test_calibration_collection_freezes_movement_but_preserves_eye_gestures(tracker):
+    tracker.set_calibration_collecting(True)
+    assistant, pause = MagicMock(), MagicMock()
+    with patch.object(vision, "win32_move") as move, patch.object(vision, "win32_click") as click:
+        frame(tracker, 10, 0.05, 0.3)
+        click.assert_called_once()
+        frame(tracker, 11, 0.05, 0.05, assistant=assistant)
+        frame(tracker, 13, 0.05, 0.05, assistant=assistant)
+        assistant.assert_called_once()
+        frame(tracker, 14, 0.3, 0.3)
+        for now in (20, 20.5, 21, 21.5):
+            frame(tracker, now, 0.05, 0.05, pause=pause)
+            frame(tracker, now + 0.1, 0.3, 0.3)
+        pause.assert_called_once()
+        move.assert_not_called()
+    assert tracker.get_head_position() == (0.5, 0.55)
+    tracker.set_calibration_collecting(False)
+    with patch.object(vision, "win32_move") as move:
+        frame(tracker, 30, 0.3, 0.3)
+    move.assert_called_once()
+
+
+def test_head_sample_clears_on_missing_face(tracker):
+    tracker.process_frame(object())
+    assert tracker.get_head_position() is not None
+    tracker.face_mesh.process.return_value.multi_face_landmarks = None
+    tracker.process_frame(object())
+    assert tracker.get_head_position() is None

@@ -1,5 +1,6 @@
 import ctypes
 import math
+import threading
 import time
 from ctypes import wintypes
 
@@ -71,6 +72,8 @@ class VisionTracker:
         )
 
         self.cursor_controller = CursorController(self.screen_w, self.screen_h)
+        self._calibration_collecting = threading.Event()
+        self._head_position = None
 
         self.calibration_ear = []
         self.calibration_nose_x = []
@@ -125,7 +128,21 @@ class VisionTracker:
     def reset_cursor(self):
         self.cursor_controller.reset()
 
+    def apply_calibration(self, parameters):
+        self.cursor_controller.set_calibration(parameters)
+
+    def set_calibration_collecting(self, collecting):
+        if collecting:
+            self._calibration_collecting.set()
+        else:
+            self._calibration_collecting.clear()
+        self.reset_cursor()
+
+    def get_head_position(self):
+        return self._head_position
+
     def process_frame(self, frame, on_assistant_trigger=None, on_shutdown_trigger=None):
+        self._head_position = None
         frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         results = self.face_mesh.process(frame_rgb)
         self._preview_landmarks = None
@@ -146,6 +163,7 @@ class VisionTracker:
             self.reset_cursor()
             return
         left_ear = self.calculate_ear(landmarks, 159, 145, 33, 133)
+        self._head_position = (nose.x, nose.y)
         right_ear = self.calculate_ear(landmarks, 386, 374, 362, 263)
         avg_ear = (left_ear + right_ear) / 2.0
 
@@ -204,9 +222,12 @@ class VisionTracker:
             self.assistant_triggered = False
 
         # 4. Движение курсора
-        position = self.cursor_controller.update_head(nose.x, nose.y, self.center_x, self.center_y)
-        if position is not None:
-            win32_move(round(position[0]), round(position[1]))
+        if not self._calibration_collecting.is_set():
+            position = self.cursor_controller.update_head(
+                nose.x, nose.y, self.center_x, self.center_y
+            )
+            if position is not None:
+                win32_move(round(position[0]), round(position[1]))
 
         # 5. Одиночный клик левым глазом (SendInput)
         if left_closed and not right_closed:
