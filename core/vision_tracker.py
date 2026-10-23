@@ -100,6 +100,13 @@ class VisionTracker:
         self.blink_timestamps = []
         self.max_blink_window = 2.8
         self.last_blink_registered = 0.0
+        self._preview_landmarks = None
+
+    def get_preview_landmarks(self):
+        """Snapshot the last detection only when the camera worker samples a preview."""
+        if self._preview_landmarks is None:
+            return ()
+        return tuple((point.x, point.y) for point in self._preview_landmarks)
 
     def calculate_ear(self, landmarks, top_idx, bot_idx, left_idx, right_idx):
         top = np.array([landmarks[top_idx].x, landmarks[top_idx].y])
@@ -130,11 +137,13 @@ class VisionTracker:
     def process_frame(self, frame, on_assistant_trigger=None, on_shutdown_trigger=None):
         frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         results = self.face_mesh.process(frame_rgb)
+        self._preview_landmarks = None
 
         if not results.multi_face_landmarks:
             return
 
         landmarks = results.multi_face_landmarks[0].landmark
+        self._preview_landmarks = landmarks
         now = time.time()
 
         nose = landmarks[4]
