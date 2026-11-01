@@ -8,6 +8,7 @@ import customtkinter as ctk
 import cv2
 
 from core.cursor_controller import DEFAULT_CURSOR_SETTINGS
+from core.on_screen_keyboard import OnScreenKeyboard
 from core.vision_tracker import VisionTracker
 from core.voice_assistant import PolishVoiceAssistant
 from ui.camera_preview import CameraPreview, LatestFrameBuffer, PreviewFrame
@@ -25,6 +26,7 @@ class AeroAssistApp(ctk.CTk):
         self.resizable(True, True)
         ctk.set_appearance_mode("dark")
 
+        self.keyboard_window = None
         self.tracker = VisionTracker()
         self.assistant = PolishVoiceAssistant()
 
@@ -64,6 +66,17 @@ class AeroAssistApp(ctk.CTk):
             font=("Arial", 14, "bold"),
         )
         self.btn_toggle.pack(pady=10, padx=40, fill="x")
+
+        self.btn_keyboard = ctk.CTkButton(
+            content,
+            text="Klawiatura ekranowa",
+            command=self.toggle_keyboard_ui,
+            height=38,
+            fg_color="#2e4053",
+            hover_color="#34495e",
+            font=("Arial", 13, "bold"),
+        )
+        self.btn_keyboard.pack(pady=5, padx=40, fill="x")
 
         self.label_status = ctk.CTkLabel(
             content,
@@ -111,6 +124,17 @@ class AeroAssistApp(ctk.CTk):
             "• 4 szybkie mrugnięcia — zatrzymanie / pauza śledzenia",
         )
         self.info_box.configure(state="disabled")
+
+    def toggle_keyboard_ui(self):
+        if (
+            self.keyboard_window is None
+            or not hasattr(self.keyboard_window, "winfo_exists")
+            or not self.keyboard_window.winfo_exists()
+        ):
+            self.keyboard_window = OnScreenKeyboard(self)
+        else:
+            self.keyboard_window.destroy()
+            self.keyboard_window = None
 
     def change_sensitivity(self, val):
         self.tracker.sensitivity = float(val)
@@ -384,6 +408,11 @@ class AeroAssistApp(ctk.CTk):
         if self._closing:
             return
         self._closing = True
+        if hasattr(self, "keyboard_window") and self.keyboard_window and self.keyboard_window.winfo_exists():
+            try:
+                self.keyboard_window.destroy()
+            except Exception:
+                pass
         self._request_stop()
         self._finish_close()
 
