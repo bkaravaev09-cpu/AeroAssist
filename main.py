@@ -29,6 +29,7 @@ class AeroAssistApp(ctk.CTk):
         self.keyboard_window = None
         self.tracker = VisionTracker()
         self.assistant = PolishVoiceAssistant()
+        self.assistant.set_keyboard_callback(self._keyboard_action_from_voice)
 
         self._stop_event = threading.Event()
         self._stop_event.set()
@@ -124,6 +125,16 @@ class AeroAssistApp(ctk.CTk):
             "• 4 szybkie mrugnięcia — zatrzymanie / pauza śledzenia",
         )
         self.info_box.configure(state="disabled")
+
+        # Visual gesture hints (Phase 4)
+        self.gesture_hint = ctk.CTkLabel(
+            content,
+            text="💡 Подсказки: Левое моргание = клик | 4 моргания = пауза | Глаза >1.5с = голос",
+            text_color="#50e3c2",
+            font=("Arial", 11, "bold"),
+        )
+        self.gesture_hint.pack(pady=5, padx=30, fill="x")
+
 
     def toggle_keyboard_ui(self):
         if (
@@ -341,6 +352,27 @@ class AeroAssistApp(ctk.CTk):
         self._preview_frames.publish(
             PreviewFrame(session_id, small, self.tracker.get_preview_landmarks(), fps, captured_at)
         )
+
+
+    def _keyboard_action_from_voice(self, action, *args):
+        """Safe callback from voice thread to execute keyboard actions on GUI thread."""
+        def run_action():
+            if action == "toggle":
+                self.toggle_keyboard_ui()
+            elif action == "close":
+                if hasattr(self, 'keyboard_window') and self.keyboard_window is not None:
+                    try:
+                        self.keyboard_window.destroy()
+                    except Exception:
+                        pass
+                    self.keyboard_window = None
+            elif action == "language":
+                if hasattr(self, 'keyboard_window') and self.keyboard_window is not None:
+                    try:
+                        self.keyboard_window.toggle_language()
+                    except Exception:
+                        pass
+        self.after(0, run_action)
 
     def _poll_worker_events(self):
         """Tk schedules this poll; workers use Queue.put and never Tk.after."""
