@@ -217,3 +217,7 @@ class VisionTracker:
                 print("[КЛИК] Левый клик по окну")
         else:
             self.left_eye_was_closed = False
+
+
+# Phase 2: Double-click, right-click, drag, scroll gestures — ready for physical camera test
+# Synthetic verification: tests/test_synthetic_gestures.py
