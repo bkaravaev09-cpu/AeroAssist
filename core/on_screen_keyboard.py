@@ -120,13 +120,12 @@ class OnScreenKeyboard(ctk.CTkToplevel):
             send_unicode_char(key.lower())
 
     def _ensure_osk_focus(self):
-        """Bring OSK window to front and ensure it has focus."""
+        """Keep OSK visible but do NOT steal focus from text fields."""
         if self.winfo_exists():
-            self.lift()  # Bring to front
-            self.update_idletasks()  # Refresh window state
-            # Force focus on the OSK window itself
-            hwnd = user32.GetParent(self.winfo_id()) or self.winfo_id()
-            user32.SetForegroundWindow(hwnd)
+            self.lift()
+            self.update_idletasks()
+            # Do NOT call SetForegroundWindow - keep focus on user's text field
+            # Only raise OSK to top without activating
 
     def _render_keyboard(self):
         if self.rows_frame:

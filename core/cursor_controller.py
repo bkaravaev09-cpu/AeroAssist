@@ -7,8 +7,8 @@ from dataclasses import dataclass, replace
 
 @dataclass(frozen=True)
 class CursorSettings:
-    sensitivity: float = 1.9
-    smoothing: float = 0.74
+    sensitivity: float = 1.2
+    smoothing: float = 0.85
     dead_zone: float = 8.0
     max_step: float = 80.0
     max_head_step: float = 0.15
