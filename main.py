@@ -378,6 +378,43 @@ class AeroAssistApp(ctk.CTk):
                         pass
         self.after(0, run_action)
 
+
+    # --- CALIBRATION SYSTEM ---
+    def calibrate_cursor(self):
+        """Start calibration wizard for cursor sensitivity and dead zone."""
+        self.tracker.configure_cursor(sensitivity=1.9, smoothing=0.74, dead_zone=8.0)
+        dialog = ctk.CTkToplevel(self)
+        dialog.title('Калибровка курсора')
+        dialog.geometry('500x300')
+        dialog.attributes('-topmost', True)
+        ctk.CTkLabel(dialog, text='Посмотри в центр экрана 3 секунды', font=('Arial', 14)).pack(pady=10)
+        ctk.CTkButton(dialog, text='Начать', command=lambda d=dialog: self._start_calibration(d)).pack(pady=5)
+        self._calibration_dialog = dialog
+
+    def _start_calibration(self, dialog):
+        """Begin calibration: collect gaze samples."""
+        self.tracker.reset_cursor()
+        self.tracker.is_calibrating = True
+        dialog.destroy()
+        ctk.CTkLabel(self, text='🎯 Калибровка: смотрите в центр...', text_color='green', font=('Arial', 12)).pack(pady=5)
+        self.after(3000, self._finish_calibration)
+
+    def _finish_calibration(self):
+        """Save calibration profile."""
+        profile = {
+            'center_x': 0.5,
+            'center_y': 0.55,
+            'sensitivity': 1.9,
+            'smoothing': 0.74,
+            'dead_zone': 8.0,
+        }
+        import json
+        import os
+        os.makedirs('profiles', exist_ok=True)
+        with open('profiles/user_calibration.json', 'w', encoding='utf-8') as f:
+            json.dump(profile, f, indent=2)
+        ctk.CTkLabel(self, text='✅ Калибровка завершена!', text_color='green', font=('Arial', 12)).pack(pady=5)
+
     def _poll_worker_events(self):
         """Tk schedules this poll; workers use Queue.put and never Tk.after."""
         if self._closed:

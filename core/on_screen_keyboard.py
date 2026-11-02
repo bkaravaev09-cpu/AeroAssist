@@ -1,4 +1,4 @@
-"""On-screen keyboard for accessibility — no hand needed."""
+"""On-screen keyboard for accessibility - fixed version."""
 import ctypes
 import time
 from ctypes import wintypes
@@ -17,17 +17,14 @@ class KEYBDINPUT(ctypes.Structure):
         ("dwExtraInfo", ctypes.POINTER(wintypes.ULONG)),
     ]
 
-
 class INPUT(ctypes.Structure):
     class _INPUT_UNION(ctypes.Union):
         _fields_ = [("ki", KEYBDINPUT)]
-
     _anonymous_ = ("_union",)
     _fields_ = [
         ("type", wintypes.DWORD),
         ("_union", _INPUT_UNION),
     ]
-
 
 INPUT_KEYBOARD = 1
 KEYEVENTF_KEYUP = 0x0002
@@ -61,15 +58,14 @@ def send_special_key(vk_code):
 
 class OnScreenKeyboard(ctk.CTkToplevel):
     """Large-key on-screen keyboard with visual feedback for eye-tracking users."""
-
     def __init__(self, master=None):
         super().__init__(master)
-
+        
         self.title("AeroAssist Keyboard")
         self.attributes("-topmost", True)
         self.overrideredirect(True)
         self.resizable(False, False)
-
+        
         screen_w = user32.GetSystemMetrics(0)
         screen_h = user32.GetSystemMetrics(1)
         kb_w, kb_h = 1000, 320
@@ -106,9 +102,10 @@ class OnScreenKeyboard(ctk.CTkToplevel):
         self.after(duration_ms, lambda: btn.configure(fg_color=original))
 
     def _handle_key_click(self, key, btn=None):
+        """Handle key press with OSK focus management."""
+        self._ensure_osk_focus()  # Ensure OSK has focus before sending input
         if btn is not None:
             self._highlight_button(btn)
-
         if key == "CLOSE":
             self.destroy()
         elif key == "LANG":
@@ -121,6 +118,15 @@ class OnScreenKeyboard(ctk.CTkToplevel):
             send_special_key(0x20)
         else:
             send_unicode_char(key.lower())
+
+    def _ensure_osk_focus(self):
+        """Bring OSK window to front and ensure it has focus."""
+        if self.winfo_exists():
+            self.lift()  # Bring to front
+            self.update_idletasks()  # Refresh window state
+            # Force focus on the OSK window itself
+            hwnd = user32.GetParent(self.winfo_id()) or self.winfo_id()
+            user32.SetForegroundWindow(hwnd)
 
     def _render_keyboard(self):
         if self.rows_frame:
@@ -179,11 +185,8 @@ class OnScreenKeyboard(ctk.CTkToplevel):
                     font=("Arial", 14, "bold"),
                     fg_color=color,
                     hover_color=hover,
-                    command=lambda k=key, b=None: self._handle_key_click(k, b),
+                    command=lambda k=key, b=None: self._handle_key_click(k, b)
                 )
-                # Store button reference so we can highlight it
-                # We need a closure that captures the actual button widget
-                btn.configure(command=lambda k=key, current_btn=btn: self._handle_key_click(k, current_btn))
                 btn.pack(side="left", padx=3, pady=2, expand=(key == "SPACE"))
 
     def destroy(self):
