@@ -1,3 +1,4 @@
+"""On-screen keyboard for accessibility — no hand needed."""
 import ctypes
 import time
 from ctypes import wintypes
@@ -13,71 +14,79 @@ class KEYBDINPUT(ctypes.Structure):
         ("wScan", wintypes.WORD),
         ("dwFlags", wintypes.DWORD),
         ("time", wintypes.DWORD),
-        ("dwExtraInfo", ctypes.POINTER(wintypes.ULONG))
+        ("dwExtraInfo", ctypes.POINTER(wintypes.ULONG)),
     ]
+
 
 class INPUT(ctypes.Structure):
     class _INPUT_UNION(ctypes.Union):
         _fields_ = [("ki", KEYBDINPUT)]
+
     _anonymous_ = ("_union",)
     _fields_ = [
         ("type", wintypes.DWORD),
-        ("_union", _INPUT_UNION)
+        ("_union", _INPUT_UNION),
     ]
+
 
 INPUT_KEYBOARD = 1
 KEYEVENTF_KEYUP = 0x0002
 KEYEVENTF_UNICODE = 0x0004
 
+
 def send_unicode_char(char):
-    """Печатает любой Unicode символ (RU/EN) в активное окно"""
+    """Send Unicode character via Win32 SendInput (works with RU/EN)."""
     code = ord(char)
     inp_down = INPUT()
     inp_down.type = INPUT_KEYBOARD
     inp_down.ki.wScan = code
     inp_down.ki.dwFlags = KEYEVENTF_UNICODE
     user32.SendInput(1, ctypes.byref(inp_down), ctypes.sizeof(INPUT))
-    
-    time.sleep(0.04)
-    
+
+    time.sleep(0.02)
+
     inp_up = INPUT()
     inp_up.type = INPUT_KEYBOARD
     inp_up.ki.wScan = code
     inp_up.ki.dwFlags = KEYEVENTF_UNICODE | KEYEVENTF_KEYUP
     user32.SendInput(1, ctypes.byref(inp_up), ctypes.sizeof(INPUT))
 
+
 def send_special_key(vk_code):
-    """Эмулирует специальные клавиши (Backspace, Enter, Space)"""
+    """Send special key via Win32 keybd_event (Backspace, Enter, Space)."""
     user32.keybd_event(vk_code, 0, 0, 0)
-    time.sleep(0.04)
+    time.sleep(0.02)
     user32.keybd_event(vk_code, 0, KEYEVENTF_KEYUP, 0)
 
 
 class OnScreenKeyboard(ctk.CTkToplevel):
+    """Large-key on-screen keyboard with visual feedback for eye-tracking users."""
+
     def __init__(self, master=None):
         super().__init__(master)
-        
+
         self.title("AeroAssist Keyboard")
         self.attributes("-topmost", True)
         self.overrideredirect(True)
         self.resizable(False, False)
-        
+
         screen_w = user32.GetSystemMetrics(0)
         screen_h = user32.GetSystemMetrics(1)
-        kb_w, kb_h = 880, 240
+        kb_w, kb_h = 1000, 320
         pos_x = (screen_w - kb_w) // 2
-        pos_y = screen_h - kb_h - 45
+        pos_y = screen_h - kb_h - 30
         self.geometry(f"{kb_w}x{kb_h}+{pos_x}+{pos_y}")
 
         self.configure(fg_color="#181818")
         self.current_lang = "RU"
         self.rows_frame = None
-        
+        self.active_button = None  # Track which button is pressed for visual feedback
+
         self._set_no_activate()
         self._render_keyboard()
 
     def _set_no_activate(self):
-        """Предотвращает перехват фокуса каретки ввода"""
+        """Keep focus on the app behind the keyboard (no window stealing)."""
         self.update_idletasks()
         hwnd = user32.GetParent(self.winfo_id()) or self.winfo_id()
         GWL_EXSTYLE = -20
@@ -90,7 +99,16 @@ class OnScreenKeyboard(ctk.CTkToplevel):
         self.current_lang = "EN" if self.current_lang == "RU" else "RU"
         self._render_keyboard()
 
-    def _handle_key_click(self, key):
+    def _highlight_button(self, btn, color="#4a9eff", duration_ms=150):
+        """Visual feedback: flash button when pressed."""
+        original = btn.cget("fg_color")
+        btn.configure(fg_color=color)
+        self.after(duration_ms, lambda: btn.configure(fg_color=original))
+
+    def _handle_key_click(self, key, btn=None):
+        if btn is not None:
+            self._highlight_button(btn)
+
         if key == "CLOSE":
             self.destroy()
         elif key == "LANG":
@@ -109,21 +127,21 @@ class OnScreenKeyboard(ctk.CTkToplevel):
             self.rows_frame.destroy()
 
         self.rows_frame = ctk.CTkFrame(self, fg_color="transparent")
-        self.rows_frame.pack(fill="both", expand=True, padx=4, pady=4)
+        self.rows_frame.pack(fill="both", expand=True, padx=6, pady=6)
 
         if self.current_lang == "RU":
             layout = [
                 ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0", "BKSP"],
-                ["Й", "Ц", "У", "К", "Е", "Н", "Г", "Ш", "Щ", "З", "Х", "Ъ"],
+                ["Ё", "Й", "Ц", "У", "К", "Е", "Н", "Г", "Ш", "Щ", "З", "Х", "Ъ"],
                 ["Ф", "Ы", "В", "А", "П", "Р", "О", "Л", "Д", "Ж", "Э", "ENTER"],
-                ["LANG", "Я", "Ч", "С", "М", "И", "Т", "Ь", "Б", "Ю", "SPACE", "CLOSE"]
+                ["LANG", "Я", "Ч", "С", "М", "И", "Т", "Ь", "Б", "Ю", "SPACE", "CLOSE"],
             ]
         else:
             layout = [
                 ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0", "BKSP"],
                 ["Q", "W", "E", "R", "T", "Y", "U", "I", "O", "P"],
                 ["A", "S", "D", "F", "G", "H", "J", "K", "L", "ENTER"],
-                ["LANG", "Z", "X", "C", "V", "B", "N", "M", "SPACE", "CLOSE"]
+                ["LANG", "Z", "X", "C", "V", "B", "N", "M", "SPACE", "CLOSE"],
             ]
 
         for row in layout:
@@ -131,24 +149,25 @@ class OnScreenKeyboard(ctk.CTkToplevel):
             row_frame.pack(pady=2, fill="x")
 
             for key in row:
-                btn_w = 46
+                # Large buttons for eye-tracking precision
+                btn_w = 70
                 color = "#2a2a2a"
                 hover = "#3d3d3d"
                 btn_text = key
 
                 if key == "LANG":
-                    btn_text = f"🌐 {self.current_lang}"
-                    btn_w = 68
+                    btn_text = f"ЯЗЫК {self.current_lang}"
+                    btn_w = 90
                     color = "#1f618d"
                     hover = "#2874a6"
                 elif key == "SPACE":
-                    btn_w = 150
+                    btn_w = 200
                 elif key in ("BKSP", "ENTER"):
-                    btn_w = 70
+                    btn_w = 100
                     color = "#2e4053"
                     hover = "#34495e"
                 elif key == "CLOSE":
-                    btn_w = 64
+                    btn_w = 90
                     color = "#7b241c"
                     hover = "#922b21"
 
@@ -156,11 +175,20 @@ class OnScreenKeyboard(ctk.CTkToplevel):
                     row_frame,
                     text=btn_text,
                     width=btn_w,
-                    height=44,
-                    font=("Arial", 12, "bold"),
+                    height=52,
+                    font=("Arial", 14, "bold"),
                     fg_color=color,
                     hover_color=hover,
-                    takefocus=False,
-                    command=lambda k=key: self._handle_key_click(k)
+                    command=lambda k=key, b=None: self._handle_key_click(k, b),
                 )
-                btn.pack(side="left", padx=2, expand=(key == "SPACE"))
+                # Store button reference so we can highlight it
+                # We need a closure that captures the actual button widget
+                btn.configure(command=lambda k=key, current_btn=btn: self._handle_key_click(k, current_btn))
+                btn.pack(side="left", padx=3, pady=2, expand=(key == "SPACE"))
+
+    def destroy(self):
+        """Safe destroy with visual cleanup."""
+        try:
+            super().destroy()
+        except Exception:
+            pass

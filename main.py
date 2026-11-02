@@ -144,7 +144,10 @@ class AeroAssistApp(ctk.CTk):
         ):
             self.keyboard_window = OnScreenKeyboard(self)
         else:
-            self.keyboard_window.destroy()
+            try:
+                self.keyboard_window.destroy()
+            except Exception:
+                pass
             self.keyboard_window = None
 
     def change_sensitivity(self, val):
@@ -362,7 +365,8 @@ class AeroAssistApp(ctk.CTk):
             elif action == "close":
                 if hasattr(self, 'keyboard_window') and self.keyboard_window is not None:
                     try:
-                        self.keyboard_window.destroy()
+                        if self.keyboard_window.winfo_exists():
+                            self.keyboard_window.destroy()
                     except Exception:
                         pass
                     self.keyboard_window = None
@@ -449,6 +453,14 @@ class AeroAssistApp(ctk.CTk):
         self._finish_close()
 
     def _finish_close(self):
+        # Safe keyboard cleanup before destroying main window
+        if hasattr(self, "keyboard_window") and self.keyboard_window is not None:
+            try:
+                if hasattr(self.keyboard_window, "winfo_exists") and self.keyboard_window.winfo_exists():
+                    self.keyboard_window.destroy()
+            except Exception:
+                pass
+            self.keyboard_window = None
         if self._closed:
             return
         workers = (self.camera_thread, self.assistant_thread)
