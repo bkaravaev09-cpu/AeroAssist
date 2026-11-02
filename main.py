@@ -68,6 +68,18 @@ class AeroAssistApp(ctk.CTk):
         )
         self.btn_toggle.pack(pady=10, padx=40, fill="x")
 
+        # Polish calibration button - new feature
+        self.btn_calibration = ctk.CTkButton(
+            content,
+            text="Kalibracja kursora",
+            command=self.calibrate_cursor,
+            height=38,
+            fg_color="#27ae60",
+            hover_color="#2ecc71",
+            font=("Arial", 13, "bold"),
+        )
+        self.btn_calibration.pack(pady=5, padx=40, fill="x")
+
         self.btn_keyboard = ctk.CTkButton(
             content,
             text="Klawiatura ekranowa",
