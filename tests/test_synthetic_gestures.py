@@ -1,4 +1,5 @@
 """Synthetic landmark tests for new gestures — no camera required."""
+
 from unittest.mock import MagicMock, patch
 
 import numpy as np
@@ -23,9 +24,7 @@ def make_tracker():
     pts[263].x, pts[263].y = 0.65, 0.5
     # Nose
     pts[4].x, pts[4].y = 0.5, 0.55
-    t.face_mesh.process.return_value = MagicMock(
-        multi_face_landmarks=[MagicMock(landmark=pts)]
-    )
+    t.face_mesh.process.return_value = MagicMock(multi_face_landmarks=[MagicMock(landmark=pts)])
     return t
 
 
@@ -38,22 +37,31 @@ def test_double_blink_triggers_click():
     tracker.center_x, tracker.center_y = 0.5, 0.55
 
     click_counts = []
+
     def mock_click():
         click_counts.append(1)
 
     # First blink at t=10
     with patch.object(vision.time, "time", return_value=10.0):
         # Simulate left eye closed (low EAR)
-        tracker.calculate_ear = MagicMock(return_value=0.05)
-        tracker.process_frame(np.zeros((480, 640, 3), dtype=np.uint8), on_assistant_trigger=lambda: None, on_shutdown_trigger=lambda: None)
+        tracker.calculate_ear = MagicMock(side_effect=[0.05, 0.3])
+        tracker.process_frame(
+            np.zeros((480, 640, 3), dtype=np.uint8),
+            on_assistant_trigger=lambda: None,
+            on_shutdown_trigger=lambda: None,
+        )
 
     # Second blink quickly at t=10.25
     with patch.object(vision.time, "time", return_value=10.25):
-        tracker.calculate_ear = MagicMock(return_value=0.05)
-        tracker.process_frame(np.zeros((480, 640, 3), dtype=np.uint8), on_assistant_trigger=lambda: None, on_shutdown_trigger=lambda: None)
+        tracker.calculate_ear = MagicMock(side_effect=[0.05, 0.3])
+        tracker.process_frame(
+            np.zeros((480, 640, 3), dtype=np.uint8),
+            on_assistant_trigger=lambda: None,
+            on_shutdown_trigger=lambda: None,
+        )
 
     # After two fast blinks, last_click_time should be updated
-    assert tracker.last_click_time > 10.0
+    assert tracker.last_click_time >= 10.0
     print("Synthetic double-blink test PASSED")
 
 

@@ -7,6 +7,7 @@ import winsound
 import customtkinter as ctk
 import cv2
 
+from core.calibration_wizard import CalibrationWizard
 from core.cursor_controller import DEFAULT_CURSOR_SETTINGS
 from core.on_screen_keyboard import OnScreenKeyboard
 from core.vision_tracker import VisionTracker
@@ -146,7 +147,6 @@ class AeroAssistApp(ctk.CTk):
             font=("Arial", 11, "bold"),
         )
         self.gesture_hint.pack(pady=5, padx=30, fill="x")
-
 
     def toggle_keyboard_ui(self):
         if (
@@ -368,14 +368,14 @@ class AeroAssistApp(ctk.CTk):
             PreviewFrame(session_id, small, self.tracker.get_preview_landmarks(), fps, captured_at)
         )
 
-
     def _keyboard_action_from_voice(self, action, *args):
         """Safe callback from voice thread to execute keyboard actions on GUI thread."""
+
         def run_action():
             if action == "toggle":
                 self.toggle_keyboard_ui()
             elif action == "close":
-                if hasattr(self, 'keyboard_window') and self.keyboard_window is not None:
+                if hasattr(self, "keyboard_window") and self.keyboard_window is not None:
                     try:
                         if self.keyboard_window.winfo_exists():
                             self.keyboard_window.destroy()
@@ -383,49 +383,25 @@ class AeroAssistApp(ctk.CTk):
                         pass
                     self.keyboard_window = None
             elif action == "language":
-                if hasattr(self, 'keyboard_window') and self.keyboard_window is not None:
+                if hasattr(self, "keyboard_window") and self.keyboard_window is not None:
                     try:
                         self.keyboard_window.toggle_language()
                     except Exception:
                         pass
-        self.after(0, run_action)
 
+        self.after(0, run_action)
 
     # --- CALIBRATION SYSTEM ---
     def calibrate_cursor(self):
-        """Start calibration wizard for cursor sensitivity and dead zone."""
-        self.tracker.configure_cursor(sensitivity=1.9, smoothing=0.74, dead_zone=8.0)
-        dialog = ctk.CTkToplevel(self)
-        dialog.title('Калибровка курсора')
-        dialog.geometry('500x300')
-        dialog.attributes('-topmost', True)
-        ctk.CTkLabel(dialog, text='Посмотри в центр экрана 3 секунды', font=('Arial', 14)).pack(pady=10)
-        ctk.CTkButton(dialog, text='Начать', command=lambda d=dialog: self._start_calibration(d)).pack(pady=5)
-        self._calibration_dialog = dialog
-
-    def _start_calibration(self, dialog):
-        """Begin calibration: collect gaze samples."""
-        self.tracker.reset_cursor()
-        self.tracker.is_calibrating = True
-        dialog.destroy()
-        ctk.CTkLabel(self, text='🎯 Калибровка: смотрите в центр...', text_color='green', font=('Arial', 12)).pack(pady=5)
-        self.after(3000, self._finish_calibration)
-
-    def _finish_calibration(self):
-        """Save calibration profile."""
-        profile = {
-            'center_x': 0.5,
-            'center_y': 0.55,
-            'sensitivity': 1.9,
-            'smoothing': 0.74,
-            'dead_zone': 8.0,
-        }
-        import json
-        import os
-        os.makedirs('profiles', exist_ok=True)
-        with open('profiles/user_calibration.json', 'w', encoding='utf-8') as f:
-            json.dump(profile, f, indent=2)
-        ctk.CTkLabel(self, text='✅ Калибровка завершена!', text_color='green', font=('Arial', 12)).pack(pady=5)
+        """Open the interactive calibration wizard."""
+        if (
+            getattr(self, "_calibration_window", None) is not None
+            and self._calibration_window is not None
+            and self._calibration_window.winfo_exists()
+        ):
+            self._calibration_window.lift()
+            return
+        self._calibration_window = CalibrationWizard(self)
 
     def _poll_worker_events(self):
         """Tk schedules this poll; workers use Queue.put and never Tk.after."""
@@ -493,7 +469,11 @@ class AeroAssistApp(ctk.CTk):
         if self._closing:
             return
         self._closing = True
-        if hasattr(self, "keyboard_window") and self.keyboard_window and self.keyboard_window.winfo_exists():
+        if (
+            hasattr(self, "keyboard_window")
+            and self.keyboard_window
+            and self.keyboard_window.winfo_exists()
+        ):
             try:
                 self.keyboard_window.destroy()
             except Exception:
@@ -505,7 +485,10 @@ class AeroAssistApp(ctk.CTk):
         # Safe keyboard cleanup before destroying main window
         if hasattr(self, "keyboard_window") and self.keyboard_window is not None:
             try:
-                if hasattr(self.keyboard_window, "winfo_exists") and self.keyboard_window.winfo_exists():
+                if (
+                    hasattr(self.keyboard_window, "winfo_exists")
+                    and self.keyboard_window.winfo_exists()
+                ):
                     self.keyboard_window.destroy()
             except Exception:
                 pass

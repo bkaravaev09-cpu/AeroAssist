@@ -98,9 +98,7 @@ class PolishVoiceAssistant:
 
         # 3. On-screen keyboard (GUI bridge)
         elif (
-            "zamknij klawiaturę" in cmd
-            or "schowaj klawiaturę" in cmd
-            or "wyłącz klawiaturę" in cmd
+            "zamknij klawiaturę" in cmd or "schowaj klawiaturę" in cmd or "wyłącz klawiaturę" in cmd
         ):
             self.speak("Zamykam klawiaturę")
             self._run_keyboard_action("close")

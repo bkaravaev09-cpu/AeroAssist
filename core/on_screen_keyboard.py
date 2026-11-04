@@ -1,11 +1,12 @@
 """On-screen keyboard for accessibility - fixed version."""
+
 import ctypes
-import time
 from ctypes import wintypes
 
 import customtkinter as ctk
 
 user32 = ctypes.windll.user32
+
 
 # ----------------- Win32 SendInput (Unicode) -----------------
 class KEYBDINPUT(ctypes.Structure):
@@ -17,14 +18,17 @@ class KEYBDINPUT(ctypes.Structure):
         ("dwExtraInfo", ctypes.POINTER(wintypes.ULONG)),
     ]
 
+
 class INPUT(ctypes.Structure):
     class _INPUT_UNION(ctypes.Union):
         _fields_ = [("ki", KEYBDINPUT)]
+
     _anonymous_ = ("_union",)
     _fields_ = [
         ("type", wintypes.DWORD),
         ("_union", _INPUT_UNION),
     ]
+
 
 INPUT_KEYBOARD = 1
 KEYEVENTF_KEYUP = 0x0002
@@ -34,38 +38,40 @@ KEYEVENTF_UNICODE = 0x0004
 def send_unicode_char(char):
     """Send Unicode character via Win32 SendInput (works with RU/EN)."""
     code = ord(char)
-    inp_down = INPUT()
-    inp_down.type = INPUT_KEYBOARD
-    inp_down.ki.wScan = code
-    inp_down.ki.dwFlags = KEYEVENTF_UNICODE
-    user32.SendInput(1, ctypes.byref(inp_down), ctypes.sizeof(INPUT))
-
-    time.sleep(0.02)
-
-    inp_up = INPUT()
-    inp_up.type = INPUT_KEYBOARD
-    inp_up.ki.wScan = code
-    inp_up.ki.dwFlags = KEYEVENTF_UNICODE | KEYEVENTF_KEYUP
-    user32.SendInput(1, ctypes.byref(inp_up), ctypes.sizeof(INPUT))
+    inputs = (INPUT * 2)()
+    inputs[0].type = INPUT_KEYBOARD
+    inputs[0].ki.wVk = 0
+    inputs[0].ki.wScan = code
+    inputs[0].ki.dwFlags = KEYEVENTF_UNICODE
+    inputs[1].type = INPUT_KEYBOARD
+    inputs[1].ki.wVk = 0
+    inputs[1].ki.wScan = code
+    inputs[1].ki.dwFlags = KEYEVENTF_UNICODE | KEYEVENTF_KEYUP
+    user32.SendInput(2, inputs, ctypes.sizeof(INPUT))
 
 
 def send_special_key(vk_code):
     """Send special key via Win32 keybd_event (Backspace, Enter, Space)."""
-    user32.keybd_event(vk_code, 0, 0, 0)
-    time.sleep(0.02)
-    user32.keybd_event(vk_code, 0, KEYEVENTF_KEYUP, 0)
+    inputs = (INPUT * 2)()
+    inputs[0].type = INPUT_KEYBOARD
+    inputs[0].ki.wVk = vk_code
+    inputs[1].type = INPUT_KEYBOARD
+    inputs[1].ki.wVk = vk_code
+    inputs[1].ki.dwFlags = KEYEVENTF_KEYUP
+    user32.SendInput(2, inputs, ctypes.sizeof(INPUT))
 
 
 class OnScreenKeyboard(ctk.CTkToplevel):
     """Large-key on-screen keyboard with visual feedback for eye-tracking users."""
+
     def __init__(self, master=None):
         super().__init__(master)
-        
+
         self.title("AeroAssist Keyboard")
         self.attributes("-topmost", True)
         self.overrideredirect(True)
         self.resizable(False, False)
-        
+
         screen_w = user32.GetSystemMetrics(0)
         screen_h = user32.GetSystemMetrics(1)
         kb_w, kb_h = 1000, 320
@@ -184,7 +190,7 @@ class OnScreenKeyboard(ctk.CTkToplevel):
                     font=("Arial", 14, "bold"),
                     fg_color=color,
                     hover_color=hover,
-                    command=lambda k=key, b=None: self._handle_key_click(k, b)
+                    command=lambda k=key, b=None: self._handle_key_click(k, b),
                 )
                 btn.pack(side="left", padx=3, pady=2, expand=(key == "SPACE"))
 

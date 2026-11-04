@@ -1,11 +1,14 @@
 """Calibration profile management — no camera needed."""
+
 import json
 import os
 
 PROFILE_PATH = "profiles/user_calibration.json"
 
 
-def save_profile(center_x, center_y, blink_threshold, ear_samples, sensitivity=1.9, smoothing=0.74, dead_zone=2.0):
+def save_profile(
+    center_x, center_y, blink_threshold, ear_samples, sensitivity=1.9, smoothing=0.74, dead_zone=2.0
+):
     profile = {
         "center_x": center_x,
         "center_y": center_y,
@@ -17,7 +20,9 @@ def save_profile(center_x, center_y, blink_threshold, ear_samples, sensitivity=1
             "dead_zone": dead_zone,
         },
     }
-    os.makedirs(os.path.dirname(PROFILE_PATH) if os.path.dirname(PROFILE_PATH) else ".", exist_ok=True)
+    os.makedirs(
+        os.path.dirname(PROFILE_PATH) if os.path.dirname(PROFILE_PATH) else ".", exist_ok=True
+    )
     with open(PROFILE_PATH, "w", encoding="utf-8") as f:
         json.dump(profile, f, indent=2, ensure_ascii=False)
     print(f"[Calibration] Profile saved to {PROFILE_PATH}")

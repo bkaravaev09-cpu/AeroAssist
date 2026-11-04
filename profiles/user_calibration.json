@@ -3,5 +3,5 @@
   "center_y": 0.55,
   "sensitivity": 1.9,
   "smoothing": 0.74,
-  "dead_zone": 8.0
+  "dead_zone": 2.0
 }
