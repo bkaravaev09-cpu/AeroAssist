@@ -41,9 +41,8 @@ def test_double_blink_triggers_click():
     def mock_click():
         click_counts.append(1)
 
-    # First blink at t=10
+    # Hold left eye closed for 1.0s (>= LEFT_HOLD_THRESHOLD) → double click
     with patch.object(vision.time, "time", return_value=10.0):
-        # Simulate left eye closed (low EAR)
         tracker.calculate_ear = MagicMock(side_effect=[0.05, 0.3])
         tracker.process_frame(
             np.zeros((480, 640, 3), dtype=np.uint8),
@@ -51,8 +50,7 @@ def test_double_blink_triggers_click():
             on_shutdown_trigger=lambda: None,
         )
 
-    # Second blink quickly at t=10.25
-    with patch.object(vision.time, "time", return_value=10.25):
+    with patch.object(vision.time, "time", return_value=11.0):
         tracker.calculate_ear = MagicMock(side_effect=[0.05, 0.3])
         tracker.process_frame(
             np.zeros((480, 640, 3), dtype=np.uint8),
@@ -60,9 +58,18 @@ def test_double_blink_triggers_click():
             on_shutdown_trigger=lambda: None,
         )
 
-    # After two fast blinks, last_click_time should be updated
+    # Release left eye → double click should fire
+    with patch.object(vision.time, "time", return_value=11.0):
+        tracker.calculate_ear = MagicMock(side_effect=[0.3, 0.3])
+        tracker.process_frame(
+            np.zeros((480, 640, 3), dtype=np.uint8),
+            on_assistant_trigger=lambda: None,
+            on_shutdown_trigger=lambda: None,
+        )
+
+    # After long hold, last_click_time should be updated (double click fired)
     assert tracker.last_click_time >= 10.0
-    print("Synthetic double-blink test PASSED")
+    print("Synthetic left-eye hold double-click test PASSED")
 
 
 if __name__ == "__main__":

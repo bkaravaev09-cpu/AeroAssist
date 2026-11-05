@@ -72,11 +72,12 @@ def test_slow_blinks_do_not_pause(tracker):
 
 def test_left_wink_click_is_debounced(tracker):
     with patch.object(vision, "win32_click") as click:
+        # Left eye closes then opens quickly → single click #1
         frame(tracker, 10, 0.05, 0.3)
+        frame(tracker, 10.1, 0.3, 0.3)
+        # Left eye closes then opens again → single click #2
         frame(tracker, 11, 0.05, 0.3)
-        click.assert_called_once()
-        frame(tracker, 12, 0.3, 0.3)
-        frame(tracker, 13, 0.05, 0.3)
+        frame(tracker, 11.1, 0.3, 0.3)
         assert click.call_count == 2
 
 

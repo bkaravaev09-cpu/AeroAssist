@@ -110,19 +110,16 @@ class VisionTracker:
         self.blink_threshold = 0.15
         self.is_calibrated = False
 
-        # Debounce кликов левым глазом
-        self.left_eye_was_closed = False
+        # Левый глаз — ЛКМ (короткое моргание) / двойной клик (зажатие на LEFT_HOLD_THRESHOLD сек)
+        self.LEFT_HOLD_THRESHOLD = 0.8
+        self.left_eye_closed_start = None
         self.last_click_time = 0.0
 
-        # Правый глаз — ПКМ
-        self.right_eye_was_closed = False
+        # Правый глаз — ПКМ / скролл (при удержании правого глаза + наклон головы)
+        self.right_eye_closed_start = None
+        self.right_scroll_triggered = False
 
-        # Двойной клик левого глаза (два быстрых за DOUBLE_CLICK_WINDOW сек)
-        self.DOUBLE_CLICK_WINDOW = 0.5
-        self._left_click_count = 0
-        self._first_click_time = 0.0
-
-        # Скролл при наклонах головы вверх/вниз
+        # Скролл при удержании правого глаза + наклон головы вверх/вниз
         self.scroll_active = False
         self.last_scroll_time = 0.0
         self.SCROLL_THRESHOLD = 0.08
@@ -253,53 +250,50 @@ class VisionTracker:
         if position is not None:
             win32_move(round(position[0]), round(position[1]))
 
-        # 5. Клики глазом: левый — ЛКМ/двойной клик, правый — ПКМ
+        # 5. Клики глазом: левый — ЛКМ (короткое моргание) / двойной клик (зажатие левого глаза)
         if left_closed and not right_closed:
-            if not self.left_eye_was_closed and (now - self.last_click_time) > 0.35:
-                self.left_eye_was_closed = True
-                self.last_click_time = now
-                # Двойной клик: второе быстрое замыкание левого глаза
-                if (
-                    self._left_click_count == 1
-                    and (now - self._first_click_time) <= self.DOUBLE_CLICK_WINDOW
-                ):
-                    self._left_click_count = 0
-                    self._first_click_time = 0.0
-                    win32_double_click()
-                    print("[КЛИК] Двойной левый клик")
-                else:
-                    self._left_click_count = 1
-                    self._first_click_time = now
-                    win32_click()
-                    print("[КЛИК] Левый клик по окну")
+            if self.left_eye_closed_start is None:
+                self.left_eye_closed_start = now
         else:
-            self.left_eye_was_closed = False
-            # Сброс счётчика двойного клика после истечения окна
-            if (
-                self._left_click_count == 1
-                and (now - self._first_click_time) > self.DOUBLE_CLICK_WINDOW
-            ):
-                self._left_click_count = 0
-                self._first_click_time = 0.0
+            if self.left_eye_closed_start is not None:
+                hold_duration = now - self.left_eye_closed_start
+                self.left_eye_closed_start = None
+                if (now - self.last_click_time) > 0.35:
+                    if hold_duration >= self.LEFT_HOLD_THRESHOLD:
+                        win32_double_click()
+                        self.last_click_time = now
+                        print("[КЛИК] Двойной левый клик (зажатие)")
+                    else:
+                        win32_click()
+                        self.last_click_time = now
+                        print("[КЛИК] Левый клик по окну")
 
-        # Правый глаз только — ПКМ
+        # 6. Правый глаз — ПКМ или скролл (при удержании правого глаза + наклон головы)
         if right_closed and not left_closed:
-            if not self.right_eye_was_closed:
-                self.right_eye_was_closed = True
-                win32_right_click()
-                print("[КЛИК] Правый клик")
+            if self.right_eye_closed_start is None:
+                self.right_eye_closed_start = now
+                self.right_scroll_triggered = False
+            # Скролл только если правый глаз зажат и голова наклонена
+            head_offset_y = nose.y - self.center_y
+            if abs(head_offset_y) > self.SCROLL_THRESHOLD:
+                if (
+                    not self.right_scroll_triggered
+                    and (now - self.last_scroll_time) > self.SCROLL_COOLDOWN
+                ):
+                    delta = -self.SCROLL_AMOUNT if head_offset_y < 0 else self.SCROLL_AMOUNT
+                    win32_scroll(delta)
+                    self.last_scroll_time = now
+                    self.right_scroll_triggered = True
+                    direction = "вверх" if head_offset_y < 0 else "вниз"
+                    print(f"[СКРОЛЛ] {direction} ({delta})")
         else:
-            self.right_eye_was_closed = False
-
-        # 6. Скролл при наклонах головы вверх / вниз
-        head_offset_y = nose.y - self.center_y
-        if abs(head_offset_y) > self.SCROLL_THRESHOLD:
-            if now - self.last_scroll_time > self.SCROLL_COOLDOWN:
-                delta = -self.SCROLL_AMOUNT if head_offset_y < 0 else self.SCROLL_AMOUNT
-                win32_scroll(delta)
-                self.last_scroll_time = now
-                direction = "вверх" if head_offset_y < 0 else "вниз"
-                print(f"[СКРОЛЛ] {direction} ({delta})")
+            if self.right_eye_closed_start is not None and not self.right_scroll_triggered:
+                hold_duration = now - self.right_eye_closed_start
+                if hold_duration < 0.6:
+                    win32_right_click()
+                    print("[КЛИК] Правый клик")
+            self.right_eye_closed_start = None
+            self.right_scroll_triggered = False
 
 
 # Phase 2: Double-click, right-click, drag, scroll gestures — ready for physical camera test
