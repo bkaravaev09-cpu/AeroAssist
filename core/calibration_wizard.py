@@ -1,6 +1,5 @@
 """Interactive calibration wizard for AeroAssist."""
 
-import math
 import time
 
 import customtkinter as ctk
@@ -16,7 +15,7 @@ class CalibrationWizard(ctk.CTkToplevel):
         super().__init__(master_app)
         self.master_app = master_app
         self.title("Kreator kalibracji AeroAssist")
-        self.geometry("760x620")
+        self.geometry("780x660")
         self.attributes("-topmost", True)
         self.resizable(False, False)
 
@@ -31,6 +30,7 @@ class CalibrationWizard(ctk.CTkToplevel):
         self.peak_x = 0.0
         self.peak_y = 0.0
         self.stability_samples = []
+        self.fine_mode = False
 
         self._cap = None
         self._face_mesh = None
@@ -64,7 +64,7 @@ class CalibrationWizard(ctk.CTkToplevel):
             self, text="Uruchamianie kamery...", width=640, height=360
         )
         self.preview_label.pack(padx=10, pady=5)
-        self.status_label = ctk.CTkLabel(self, text="", wraplength=700, justify="left")
+        self.status_label = ctk.CTkLabel(self, text="", wraplength=740, justify="left")
         self.status_label.pack(pady=5, padx=10, fill="x")
         self.progress_label = ctk.CTkLabel(self, text="")
         self.progress_label.pack(pady=2)
@@ -83,6 +83,18 @@ class CalibrationWizard(ctk.CTkToplevel):
             button_frame, text="Zakończ", command=self._finish, state="disabled"
         )
         self.finish_btn.pack(side="left", padx=5)
+
+        self.fine_var = ctk.BooleanVar(value=False)
+        self.fine_check = ctk.CTkCheckBox(
+            self,
+            text="Tryb precyzyjny (dla małych przycisków, mniejsza czułość)",
+            variable=self.fine_var,
+            command=self._toggle_fine_mode,
+        )
+        self.fine_check.pack(pady=5)
+
+    def _toggle_fine_mode(self):
+        self.fine_mode = bool(self.fine_var.get())
 
     def _next_stage(self):
         if self.stage == 0:
@@ -215,26 +227,41 @@ class CalibrationWizard(ctk.CTkToplevel):
 
         self.after(30, self._tick)
 
+    @staticmethod
+    def _pct_range(values, pct=95):
+        """Robust spread: distance between percentile and median."""
+        if len(values) < 2:
+            return 0.0
+        s = sorted(values)
+        n = len(s)
+        median = s[n // 2]
+        idx = min(n - 1, max(0, int(round(pct / 100.0 * (n - 1)))))
+        return abs(s[idx] - median)
+
     def _finish(self):
         max_peak = max(self.peak_x, self.peak_y, 1e-3)
         sensitivity = 0.15 / max_peak
         sensitivity = max(1.0, min(3.0, sensitivity))
 
+        if self.fine_mode:
+            sensitivity *= 0.6
+
+        jitter = 0.0
         if len(self.stability_samples) > 1:
             xs = [sample[0] for sample in self.stability_samples]
             ys = [sample[1] for sample in self.stability_samples]
+            jitter = (self._pct_range(xs) + self._pct_range(ys)) / 2.0
 
-            def pstdev(values):
-                mean = sum(values) / len(values)
-                return math.sqrt(sum((value - mean) ** 2 for value in values) / len(values))
+        # Bazowe wygładzanie z marży na drgania
+        smoothing = 0.70 + jitter * 25.0
+        smoothing = max(0.55, min(0.96, smoothing))
 
-            jitter = (pstdev(xs) + pstdev(ys)) / 2.0
-        else:
-            jitter = 0.0
-
-        smoothing = 0.75 + jitter * 20.0
-        smoothing = max(0.5, min(0.95, smoothing))
-        dead_zone = 2.0
+        # Strefa martwa skala się z measured jitter — większe drgania = większa strefa
+        dead_zone = 1.5 + jitter * 60.0
+        dead_zone = max(1.0, min(10.0, dead_zone))
+        if self.fine_mode:
+            dead_zone = min(dead_zone, 6.0)
+            smoothing = min(smoothing, 0.90)
 
         tracker = self.master_app.tracker
         try:
@@ -263,8 +290,12 @@ class CalibrationWizard(ctk.CTkToplevel):
             pass
 
         try:
+            mode_txt = " (tryb precyzyjny)" if self.fine_mode else ""
             self.master_app.label_status.configure(
-                text=f"Kalibracja zakończona. Czułość: {sensitivity:.2f}, wygładzanie: {smoothing:.2f}",
+                text=(
+                    f"Kalibracja zakończona{mode_txt}. Czułość: {sensitivity:.2f}, "
+                    f"wygładzanie: {smoothing:.2f}, strefa martwa: {dead_zone:.1f}px"
+                ),
                 text_color="green",
             )
         except Exception:

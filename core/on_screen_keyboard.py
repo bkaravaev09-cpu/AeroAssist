@@ -1,6 +1,7 @@
 """On-screen keyboard for accessibility - fixed version."""
 
 import ctypes
+import time
 from ctypes import wintypes
 
 import customtkinter as ctk
@@ -47,18 +48,21 @@ def send_unicode_char(char):
     inputs[1].ki.wVk = 0
     inputs[1].ki.wScan = code
     inputs[1].ki.dwFlags = KEYEVENTF_UNICODE | KEYEVENTF_KEYUP
-    user32.SendInput(2, inputs, ctypes.sizeof(INPUT))
+    user32.SendInput(2, ctypes.byref(inputs), ctypes.sizeof(INPUT))
 
 
 def send_special_key(vk_code):
-    """Send special key via Win32 keybd_event (Backspace, Enter, Space)."""
+    """Send special key via Win32 SendInput (Backspace, Enter, Space)."""
     inputs = (INPUT * 2)()
     inputs[0].type = INPUT_KEYBOARD
     inputs[0].ki.wVk = vk_code
+    inputs[0].ki.wScan = 0
+    inputs[0].ki.dwFlags = 0
     inputs[1].type = INPUT_KEYBOARD
     inputs[1].ki.wVk = vk_code
+    inputs[1].ki.wScan = 0
     inputs[1].ki.dwFlags = KEYEVENTF_KEYUP
-    user32.SendInput(2, inputs, ctypes.sizeof(INPUT))
+    user32.SendInput(2, ctypes.byref(inputs), ctypes.sizeof(INPUT))
 
 
 class OnScreenKeyboard(ctk.CTkToplevel):
@@ -85,6 +89,7 @@ class OnScreenKeyboard(ctk.CTkToplevel):
         self.active_button = None  # Track which button is pressed for visual feedback
 
         self._set_no_activate()
+        self._target_hwnd = user32.GetForegroundWindow()
         self._render_keyboard()
 
     def _set_no_activate(self):
@@ -107,9 +112,19 @@ class OnScreenKeyboard(ctk.CTkToplevel):
         btn.configure(fg_color=color)
         self.after(duration_ms, lambda: btn.configure(fg_color=original))
 
+    def _restore_target_focus(self):
+        """Return keyboard focus to the window that had it before the OSK opened."""
+        osk_hwnd = user32.GetParent(self.winfo_id()) or self.winfo_id()
+        current = user32.GetForegroundWindow()
+        if current == osk_hwnd:
+            target = getattr(self, "_target_hwnd", None)
+            if target and user32.IsWindow(target):
+                user32.SetForegroundWindow(target)
+                time.sleep(0.03)
+
     def _handle_key_click(self, key, btn=None):
         """Handle key press with OSK focus management."""
-        self._ensure_osk_focus()  # Ensure OSK has focus before sending input
+        self._restore_target_focus()
         if btn is not None:
             self._highlight_button(btn)
         if key == "CLOSE":
@@ -124,14 +139,6 @@ class OnScreenKeyboard(ctk.CTkToplevel):
             send_special_key(0x20)
         else:
             send_unicode_char(key.lower())
-
-    def _ensure_osk_focus(self):
-        """Keep OSK visible but do NOT steal focus from text fields."""
-        if self.winfo_exists():
-            self.lift()
-            self.update_idletasks()
-            # Do NOT call SetForegroundWindow - keep focus on user's text field
-            # Only raise OSK to top without activating
 
     def _render_keyboard(self):
         if self.rows_frame:

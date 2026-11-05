@@ -1,7 +1,11 @@
 {
-  "center_x": 0.5,
-  "center_y": 0.55,
-  "sensitivity": 1.9,
-  "smoothing": 0.74,
-  "dead_zone": 2.0
+  "center_x": 0.4929756820201874,
+  "center_y": 0.505303680896759,
+  "blink_threshold": 0.26398764143961995,
+  "calibration_ear_samples": [],
+  "cursor_settings": {
+    "sensitivity": 1.0,
+    "smoothing": 0.7793528702866803,
+    "dead_zone": 2.0
+  }
 }

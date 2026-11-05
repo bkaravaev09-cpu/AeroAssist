@@ -139,15 +139,6 @@ class AeroAssistApp(ctk.CTk):
         )
         self.info_box.configure(state="disabled")
 
-        # Visual gesture hints (Phase 4)
-        self.gesture_hint = ctk.CTkLabel(
-            content,
-            text="💡 Подсказки: Левое моргание = клик | 4 моргания = пауза | Глаза >1.5с = голос",
-            text_color="#50e3c2",
-            font=("Arial", 11, "bold"),
-        )
-        self.gesture_hint.pack(pady=5, padx=30, fill="x")
-
     def toggle_keyboard_ui(self):
         if (
             self.keyboard_window is None
