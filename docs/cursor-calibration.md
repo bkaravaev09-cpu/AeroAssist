@@ -129,3 +129,27 @@ thresholds may require retries on very slow cameras. The wizard covers the
 available window area with directional reference points; it does not infer eye
 fixation. Current primary-screen, last-commanded-position, frame-rate, and
 camera/speech blocking limitations remain as previously documented.
+
+## Stability test (smoothing and dead zone)
+
+The five-point calibration decides *where* the cursor goes. The separate
+**Test stabilności** button (same calibration section) decides *how* it moves:
+
+1. Hold the head centred for one second.
+2. Only when no five-point calibration is active: move to the extremes for eight
+   seconds; the amplitude sets sensitivity.
+3. Hold still for five seconds; measured jitter sets smoothing and dead zone.
+   "Tryb precyzyjny" caps both for small targets.
+
+The test reads head samples from the running tracking session (the same feed as
+the five-point wizard), so it never opens a second camera. Cursor movement is
+frozen while it is open; eye gestures stay active. Only one calibration window can
+be open at a time.
+
+The result is stored in `%LOCALAPPDATA%\AeroAssist\cursor_profile.json`
+(`version`, `smoothing`, `dead_zone`, optional `sensitivity`) and loaded at startup.
+Sensitivity from the profile is ignored while a five-point calibration is active,
+and saving a five-point calibration drops it from the profile, because a calibrated
+mapping already spans the screen and extra gain would reach the edges too early.
+The cursor sliders' restore button deletes the profile; the calibration section's
+restore button resets both the five-point mapping and the profile.

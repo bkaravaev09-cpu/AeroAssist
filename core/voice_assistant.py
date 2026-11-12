@@ -8,8 +8,23 @@ import speech_recognition as sr
 class PolishVoiceAssistant:
     def __init__(self):
         self.recognizer = sr.Recognizer()
-        self.recognizer.energy_threshold = 300  # Чувствительность микрофона
+        self.recognizer.energy_threshold = 300
         self.recognizer.dynamic_energy_threshold = True
+        self._keyboard_callback = None  # Set by main.py for GUI integration
+
+    def set_keyboard_callback(self, callback):
+        """Allow main.py to wire keyboard actions from the voice thread."""
+        self._keyboard_callback = callback
+
+    def _run_keyboard_action(self, action, *args):
+        """Invoke the keyboard callback safely from the voice thread."""
+        if self._keyboard_callback is None:
+            print(f"[Keyboard] No callback set, skipping action: {action}")
+            return
+        try:
+            self._keyboard_callback(action, *args)
+        except Exception as e:
+            print(f"[Keyboard] Callback error: {e}")
 
     def _get_engine(self):
         engine = pyttsx3.init()
@@ -27,42 +42,41 @@ class PolishVoiceAssistant:
 
     def speak(self, text):
         try:
-            print(f"[АСИСТЕНТ]: {text}")
+            print(f"[Assistant]: {text}")
             engine = self._get_engine()
             engine.say(text)
             engine.runAndWait()
             del engine
         except Exception as e:
-            print(f"[ОШИБКА ОЗВУЧКИ]: {e}")
+            print(f"[TTS Error]: {e}")
 
     def listen_and_execute(self):
-        # 1. Сначала говорим и завершаем фразу
+        """Start voice command loop (called by main.py assistant thread)."""
         self.speak("Słucham polecenia")
 
-        # 2. Только после завершения речи открываем микрофон
         try:
             with sr.Microphone() as source:
-                print("[МИКРОФОН]: Калибровка шума...")
+                print("[Microphone]: Adjusting for ambient noise...")
                 self.recognizer.adjust_for_ambient_noise(source, duration=0.5)
-                print("[МИКРОФОН]: Говорите команду...")
+                print("[Microphone]: Listening...")
                 audio = self.recognizer.listen(source, timeout=5, phrase_time_limit=5)
 
-                print("[МИКРОФОН]: Распознавание польской речи...")
+                print("[Recognition]: Processing speech...")
                 command = self.recognizer.recognize_google(audio, language="pl-PL").lower().strip()
-                print(f"[РАСПОЗНАНО]: '{command}'")
+                print(f"[Recognized]: '{command}'")
                 self._dispatch(command)
         except sr.WaitTimeoutError:
-            print("[МИКРОФОН]: Таймаут ожидания речи")
+            print("[Microphone]: Timeout waiting for phrase")
             self.speak("Koniec czasu oczekiwania")
         except sr.UnknownValueError:
-            print("[МИКРОФОН]: Речь не удалось разобрать")
+            print("[Recognition]: Could not understand audio")
             self.speak("Nie zrozumiałam polecenia")
         except Exception as e:
-            print(f"[ОШИБКА МИКРОФОНА]: {e}")
+            print(f"[Microphone Error]: {e}")
             self.speak("Problem z mikrofonem")
 
     def _dispatch(self, cmd):
-        # 1. Поиск информации в Google
+        # 1. Web search
         if "szukaj" in cmd or "znajdź" in cmd:
             query = (
                 cmd.replace("szukaj w google", "")
@@ -73,7 +87,7 @@ class PolishVoiceAssistant:
             self.speak(f"Szukam w Google: {query}")
             webbrowser.open(f"https://www.google.com/search?q={query}")
 
-        # 2. Запуск веб-сервисов
+        # 2. YouTube / browser
         elif "youtube" in cmd or "jutub" in cmd:
             self.speak("Otwieram YouTube")
             webbrowser.open("https://youtube.com")
@@ -82,41 +96,35 @@ class PolishVoiceAssistant:
             self.speak("Uruchamiam przeglądarkę")
             webbrowser.open("https://google.pl")
 
-        # 3. Управление экранной клавиатурой
+        # 3. On-screen keyboard (GUI bridge)
         elif (
             "zamknij klawiaturę" in cmd or "schowaj klawiaturę" in cmd or "wyłącz klawiaturę" in cmd
         ):
             self.speak("Zamykam klawiaturę")
-            try:
-                # Закрываем стандартную osk и современную сенсорную клавиатуру
-                subprocess.run("taskkill /f /im osk.exe", shell=True, capture_output=True)
-                subprocess.run("taskkill /f /im TextInputHost.exe", shell=True, capture_output=True)
-            except Exception as e:
-                print(f"[ОШИБКА ЗАКРЫТИЯ КЛАВИАТУРЫ]: {e}")
+            self._run_keyboard_action("close")
 
-        elif "klawiatura" in cmd or "klawiaturę" in cmd:
-            self.speak("Uruchamiam klawiaturę")
-            try:
-                subprocess.Popen("cmd.exe /c start osk.exe", shell=True)
-            except Exception as e:
-                print(f"[ОШИБКА ЗАПУСКА КЛАВИАТУРЫ]: {e}")
+        elif "otwórz klawiaturę" in cmd or "uruchom klawiaturę" in cmd or "klawiatura" in cmd:
+            self.speak("Uruchamiam klawiaturę ekranową")
+            self._run_keyboard_action("toggle")
 
-        # 4. Переключение и управление окнами (Alt+Tab, свернуть всё)
+        elif "zmień język" in cmd or "zmień język klawiatury" in cmd or "language" in cmd:
+            self.speak("Zmieniam język klawiatury")
+            self._run_keyboard_action("language")
+
+        # 4. Window switching / desktop
         elif "przełącz" in cmd or "zmień okno" in cmd or "następne" in cmd:
             self.speak("Przełączam okno")
-            # Эмуляция Alt+Tab для смены активного окна
             import pyautogui
 
             pyautogui.hotkey("alt", "tab")
 
         elif "pulpit" in cmd or "zminimalizuj" in cmd:
             self.speak("Pokazuję pulpit")
-            # Свернуть все окна (Win + D)
             import pyautogui
 
             pyautogui.hotkey("win", "d")
 
-        # 5. Инструменты Windows
+        # 5. Apps
         elif "notatnik" in cmd:
             self.speak("Otwieram notatnik")
             subprocess.Popen(["notepad.exe"])

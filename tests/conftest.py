@@ -31,6 +31,10 @@ def app(tmp_path, monkeypatch):
 
     manager = CalibrationManager(tmp_path / "calibration.json")
     monkeypatch.setattr(main, "CalibrationManager", lambda: manager)
+    from core.cursor_profile import CursorProfileStore
+
+    store = CursorProfileStore(tmp_path / "cursor_profile.json")
+    monkeypatch.setattr(main, "CursorProfileStore", lambda: store)
     instance = main.AeroAssistApp.__new__(main.AeroAssistApp)
     instance.title = MagicMock()
     instance.geometry = MagicMock()
