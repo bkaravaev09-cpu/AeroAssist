@@ -12,6 +12,7 @@ for name in ("customtkinter", "cv2", "mediapipe", "winsound", "pyautogui", "pytt
     sys.modules[name] = MagicMock(name=name)
 sys.modules["customtkinter"].CTk = type("HeadlessWindow", (), {})
 sys.modules["customtkinter"].CTkFrame = type("HeadlessFrame", (), {})
+sys.modules["customtkinter"].CTkToplevel = type("HeadlessToplevel", (), {})
 ctypes.windll = SimpleNamespace(user32=MagicMock())
 ctypes.windll.user32.GetSystemMetrics.side_effect = lambda axis: (1920, 1080)[axis]
 
@@ -25,7 +26,11 @@ def real_cv2():
 
 
 @pytest.fixture
-def app():
+def app(tmp_path, monkeypatch):
+    from core.calibration import CalibrationManager
+
+    manager = CalibrationManager(tmp_path / "calibration.json")
+    monkeypatch.setattr(main, "CalibrationManager", lambda: manager)
     instance = main.AeroAssistApp.__new__(main.AeroAssistApp)
     instance.title = MagicMock()
     instance.geometry = MagicMock()
@@ -39,6 +44,7 @@ def app():
     instance.__init__()
     instance.btn_toggle = MagicMock()
     instance.label_status = MagicMock()
+    instance.label_calibration = MagicMock()
     instance.preview = MagicMock()
     instance.slider_sens = MagicMock()
     instance.slider_smoothing = MagicMock()

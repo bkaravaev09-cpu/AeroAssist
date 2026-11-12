@@ -4,6 +4,8 @@ import math
 import threading
 from dataclasses import dataclass, replace
 
+from core.calibration import CalibrationParameters
+
 
 @dataclass(frozen=True)
 class CursorSettings:
@@ -41,6 +43,7 @@ class CursorController:
         self.width, self.height = screen_width, screen_height
         self._lock = threading.Lock()
         self._settings = settings
+        self._calibration = None
         self._position = (float(screen_width // 2), float(screen_height // 2))
         self._reset_locked()
 
@@ -57,6 +60,18 @@ class CursorController:
     def configure(self, **changes):
         with self._lock:
             self._settings = replace(self._settings, **changes)
+
+    @property
+    def calibration(self):
+        with self._lock:
+            return self._calibration
+
+    def set_calibration(self, parameters):
+        if parameters is not None and not isinstance(parameters, CalibrationParameters):
+            raise ValueError("Expected validated calibration parameters")
+        with self._lock:
+            self._calibration = parameters
+            self._reset_locked()
 
     def reset(self):
         """Discard filter/drift history while retaining the last safe cursor position."""
@@ -96,7 +111,11 @@ class CursorController:
         target = self._clamp(x, y)
         # Compare with the last accepted target, not the immediately preceding
         # sample: sub-threshold slow movement can accumulate past the dead zone.
-        if math.dist(target, self._accepted_target) >= self._settings.dead_zone:
+        reaches_edge = any(
+            target[axis] in (0.0, limit - 1.0) and target[axis] != self._accepted_target[axis]
+            for axis, limit in enumerate((self.width, self.height))
+        )
+        if reaches_edge or math.dist(target, self._accepted_target) >= self._settings.dead_zone:
             self._accepted_target = target
         alpha = 1.0 - self._settings.smoothing
         dx = (self._accepted_target[0] - self._position[0]) * alpha
@@ -124,6 +143,12 @@ class CursorController:
             self._last_head = (nose_x, nose_y)
             raw_x, raw_y = nose_x - center_x, nose_y - center_y
             gain = self._settings.sensitivity / DEFAULT_CURSOR_SETTINGS.sensitivity
+            if self._calibration is not None:
+                if self._needs_anchor:
+                    self._needs_anchor = False
+                    return self._position
+                target = self._calibration.map_head(nose_x, nose_y, self.width, self.height, gain)
+                return self._update_target_locked(*target)
             base_x = self.response_curve(raw_x) * self.width * gain + self.width / 2
             base_y = (
                 self.response_curve(raw_y, upward=raw_y < 0) * self.height * gain + self.height / 2

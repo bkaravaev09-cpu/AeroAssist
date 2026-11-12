@@ -131,6 +131,8 @@ def test_preview_adapts_to_small_window(component):
 
 
 def test_worker_reuses_capture_and_tracking_continues_with_unread_preview(app, real_cv2):
+    app._calibration_open.set()
+    app.tracker.get_head_position.return_value = (0.5, 0.55)
     app._session_id = 1
     app._stop_event.clear()
     camera = MagicMock()
@@ -160,6 +162,10 @@ def test_worker_reuses_capture_and_tracking_continues_with_unread_preview(app, r
     app.preview.show_frame.assert_not_called()
     app.after.assert_not_called()
     camera.release.assert_called_once()
+    head_sample = app._calibration_samples.take()
+    assert head_sample.session_id == 1
+    assert head_sample.position == (0.5, 0.55)
+    assert app._calibration_samples.take() is None
 
 
 def test_sampling_is_capped_without_throttling_tracking(app):
