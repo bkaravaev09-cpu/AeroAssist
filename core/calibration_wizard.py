@@ -1,321 +1,228 @@
-"""Interactive calibration wizard for AeroAssist."""
+"""Stability test: tunes cursor smoothing and dead zone from measured head jitter.
 
-import time
+It reads head samples from the running tracking session (the same feed as the
+five-point calibration window), so it never opens the camera on its own.
+Sensitivity is tuned only when no five-point calibration is active.
+"""
 
 import customtkinter as ctk
-import cv2
-import mediapipe as mp
-from PIL import Image
+
+from core.cursor_profile import MIN_STABILITY_SAMPLES, compute_profile
+
+CENTER_BOX = (0.35, 0.65)
+CENTER_HOLD = 1.0
+AMPLITUDE_SECONDS = 8.0
+STABILITY_SECONDS = 5.0
+SAMPLE_MAX_AGE = 1.0
+CANVAS_W, CANVAS_H = 480, 300
 
 
 class CalibrationWizard(ctk.CTkToplevel):
-    """Three-step calibration wizard using the webcam."""
-
-    def __init__(self, master_app):
-        super().__init__(master_app)
-        self.master_app = master_app
-        self.title("Kreator kalibracji AeroAssist")
-        self.geometry("780x660")
+    def __init__(self, master, calibrated, on_begin, on_finish, on_close):
+        super().__init__(master)
+        self.calibrated = calibrated
+        self.on_begin, self.on_finish, self.on_close = on_begin, on_finish, on_close
+        self.title("Test stabilności kursora")
+        self.geometry("560x560")
         self.attributes("-topmost", True)
         self.resizable(False, False)
-
-        self._running = True
-        self._image_ref = None
-        self.stage = 0
-        self.center_x = getattr(master_app.tracker, "center_x", 0.5)
-        self.center_y = getattr(master_app.tracker, "center_y", 0.55)
-        self.stage0_good_since = None
-        self.stage1_start = None
-        self.stage2_start = None
-        self.peak_x = 0.0
-        self.peak_y = 0.0
-        self.stability_samples = []
-        self.fine_mode = False
-
-        self._cap = None
-        self._face_mesh = None
-        self._open_camera()
-
+        self.protocol("WM_DELETE_WINDOW", self.cancel)
+        self._reset_state()
         self._build_ui()
-        self.protocol("WM_DELETE_WINDOW", self._close)
-        self.after(30, self._tick)
+        self._show_stage()
+        if not self.on_begin():
+            self.tracking_unavailable("Nie można uruchomić śledzenia. Spróbuj ponownie.")
 
-    def _open_camera(self):
-        try:
-            self._cap = cv2.VideoCapture(0)
-        except Exception:
-            self._cap = None
-        try:
-            self._face_mesh = mp.solutions.face_mesh.FaceMesh(
-                max_num_faces=1,
-                refine_landmarks=True,
-                min_detection_confidence=0.5,
-                min_tracking_confidence=0.5,
-            )
-        except Exception:
-            self._face_mesh = None
+    def _reset_state(self):
+        self._closed = False
+        self.stage = "position"
+        self.fine_mode = False
+        self.center = None
+        self._good_since = None
+        self._stage_started = None
+        self.peak = 0.0
+        self.stability_samples = []
+        self._last_sample_at = None
+
+    @property
+    def stages(self):
+        if self.calibrated:
+            return ("position", "stability")
+        return ("position", "amplitude", "stability")
 
     def _build_ui(self):
-        self.title_label = ctk.CTkLabel(
-            self, text="Etap 1/3: Ustaw głowę przed kamerą", font=("Arial", 18, "bold")
-        )
+        self.title_label = ctk.CTkLabel(self, text="", font=("Arial", 18, "bold"))
         self.title_label.pack(pady=10)
-        self.preview_label = ctk.CTkLabel(
-            self, text="Uruchamianie kamery...", width=640, height=360
+        self.canvas = ctk.CTkCanvas(
+            self, width=CANVAS_W, height=CANVAS_H, bg="#1e1e1e", highlightthickness=0
         )
-        self.preview_label.pack(padx=10, pady=5)
-        self.status_label = ctk.CTkLabel(self, text="", wraplength=740, justify="left")
+        self.canvas.pack(padx=10, pady=5)
+        self.status_label = ctk.CTkLabel(self, text="", wraplength=520, justify="left")
         self.status_label.pack(pady=5, padx=10, fill="x")
         self.progress_label = ctk.CTkLabel(self, text="")
         self.progress_label.pack(pady=2)
-
-        button_frame = ctk.CTkFrame(self, fg_color="transparent")
-        button_frame.pack(pady=10)
+        buttons = ctk.CTkFrame(self, fg_color="transparent")
+        buttons.pack(pady=10)
         self.cancel_btn = ctk.CTkButton(
-            button_frame, text="Anuluj", command=self._close, fg_color="#7b241c"
+            buttons, text="Anuluj", command=self.cancel, fg_color="#7b241c"
         )
         self.cancel_btn.pack(side="left", padx=5)
         self.next_btn = ctk.CTkButton(
-            button_frame, text="Dalej", command=self._next_stage, state="disabled"
+            buttons, text="Dalej", command=self.next_stage, state="disabled"
         )
         self.next_btn.pack(side="left", padx=5)
         self.finish_btn = ctk.CTkButton(
-            button_frame, text="Zakończ", command=self._finish, state="disabled"
+            buttons, text="Zakończ", command=self.finish, state="disabled"
         )
         self.finish_btn.pack(side="left", padx=5)
-
         self.fine_var = ctk.BooleanVar(value=False)
-        self.fine_check = ctk.CTkCheckBox(
+        ctk.CTkCheckBox(
             self,
-            text="Tryb precyzyjny (dla małych przycisków, mniejsza czułość)",
+            text="Tryb precyzyjny (dla małych przycisków)",
             variable=self.fine_var,
-            command=self._toggle_fine_mode,
+            command=lambda: setattr(self, "fine_mode", bool(self.fine_var.get())),
+        ).pack(pady=5)
+
+    def _show_stage(self):
+        number = self.stages.index(self.stage) + 1
+        total = len(self.stages)
+        texts = {
+            "position": (
+                "Ustaw głowę przed kamerą",
+                "Ustaw głowę tak, aby punkt był w zielonej ramce, i przytrzymaj 1 sekundę.",
+            ),
+            "amplitude": (
+                "Maksymalna amplituda ruchu",
+                "Poruszaj głową do skrajnych pozycji: lewo, prawo, góra, dół. "
+                f"Pomiar potrwa {AMPLITUDE_SECONDS:.0f} sekund.",
+            ),
+            "stability": (
+                "Test stabilności",
+                f"Trzymaj głowę nieruchomo przez {STABILITY_SECONDS:.0f} sekund. Mierzę drgania.",
+            ),
+        }
+        title, status = texts[self.stage]
+        self.title_label.configure(text=f"Etap {number}/{total}: {title}")
+        self.status_label.configure(text=status)
+        self.progress_label.configure(text="")
+        self.next_btn.configure(state="disabled")
+        self.finish_btn.configure(state="disabled")
+
+    def next_stage(self):
+        index = self.stages.index(self.stage)
+        if index + 1 >= len(self.stages):
+            return
+        self.stage = self.stages[index + 1]
+        self._stage_started = None
+        self.peak = 0.0
+        self.stability_samples = []
+        self._show_stage()
+
+    def _draw(self, position):
+        canvas = self.canvas
+        canvas.delete("all")
+        inside = position is not None and all(
+            CENTER_BOX[0] <= value <= CENTER_BOX[1] for value in position
         )
-        self.fine_check.pack(pady=5)
+        color = "#2ecc71" if inside else "#e74c3c"
+        low, high = CENTER_BOX
+        canvas.create_rectangle(
+            low * CANVAS_W, low * CANVAS_H, high * CANVAS_W, high * CANVAS_H, outline=color, width=2
+        )
+        if position is not None:
+            x, y = position[0] * CANVAS_W, position[1] * CANVAS_H
+            canvas.create_oval(x - 7, y - 7, x + 7, y + 7, fill=color, outline="")
 
-    def _toggle_fine_mode(self):
-        self.fine_mode = bool(self.fine_var.get())
-
-    def _next_stage(self):
-        if self.stage == 0:
-            self.stage = 1
-            self.stage1_start = time.monotonic()
-            self.peak_x = 0.0
-            self.peak_y = 0.0
-            self.title_label.configure(text="Etap 2/3: Maksymalna amplituda ruchu")
-            self.next_btn.configure(state="disabled")
-            self.status_label.configure(
-                text="Poruszaj głową do skrajnych pozycji: lewo, prawo, góra, dół. Pomiar potrwa 8 sekund."
-            )
-        elif self.stage == 1:
-            self.stage = 2
-            self.stage2_start = time.monotonic()
-            self.stability_samples = []
-            self.title_label.configure(text="Etap 3/3: Test stabilności")
-            self.next_btn.configure(state="disabled")
-            self.status_label.configure(
-                text="Trzymaj głowę nieruchomo przez 5 sekund. Mierzę drgania."
-            )
-
-    def _tick(self):
-        if not self._running:
+    def receive_sample(self, sample):
+        """Called on the GUI thread with a fresh HeadSample from the tracking session."""
+        if self._closed or sample.captured_at == self._last_sample_at:
             return
-        if self._cap is None:
-            self.status_label.configure(text="Nie można otworzyć kamery.")
-            self.after(100, self._tick)
-            return
-
-        ret, frame = self._cap.read()
-        if not ret or frame is None:
-            self.status_label.configure(text="Brak klatki z kamery.")
-            self.after(100, self._tick)
-            return
-
-        frame = cv2.flip(frame, 1)
-        height, width = frame.shape[:2]
-        landmarks = None
-        if self._face_mesh is not None:
-            try:
-                rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                results = self._face_mesh.process(rgb)
-                if results.multi_face_landmarks:
-                    landmarks = results.multi_face_landmarks[0].landmark
-            except Exception:
-                landmarks = None
-
-        color = (0, 0, 255)
-        if landmarks is not None:
-            nose = landmarks[4]
-            try:
-                face_width = abs(landmarks[234].x - landmarks[454].x)
-            except Exception:
-                face_width = 0.3
-            centered = 0.35 <= nose.x <= 0.65 and 0.35 <= nose.y <= 0.65
-            good_distance = 0.12 <= face_width <= 0.5
-            if centered and good_distance:
-                color = (0, 255, 0)
-            nx, ny = int(nose.x * width), int(nose.y * height)
-            cv2.circle(frame, (nx, ny), 6, color, -1)
-
-        x1, y1 = int(0.35 * width), int(0.35 * height)
-        x2, y2 = int(0.65 * width), int(0.65 * height)
-        cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
-
-        now = time.monotonic()
-        if landmarks is not None:
-            nose = landmarks[4]
-            if self.stage == 0:
-                try:
-                    face_width = abs(landmarks[234].x - landmarks[454].x)
-                except Exception:
-                    face_width = 0.3
-                centered = 0.35 <= nose.x <= 0.65 and 0.35 <= nose.y <= 0.65
-                good_distance = 0.12 <= face_width <= 0.5
-                if centered and good_distance:
-                    if self.stage0_good_since is None:
-                        self.stage0_good_since = now
-                    elif now - self.stage0_good_since >= 1.0:
-                        self.center_x = float(nose.x)
-                        self.center_y = float(nose.y)
-                        self.next_btn.configure(state="normal")
-                        self.status_label.configure(
-                            text="Pozycja prawidłowa. Możesz przejść dalej."
-                        )
-                else:
-                    self.stage0_good_since = None
-                    self.status_label.configure(
-                        text="Ustaw głowę centralnie przed kamerą, w odpowiedniej odległości (zielona ramka)."
-                    )
-            elif self.stage == 1:
-                dx = abs(float(nose.x) - self.center_x)
-                dy = abs(float(nose.y) - self.center_y)
-                if dx > self.peak_x:
-                    self.peak_x = dx
-                if dy > self.peak_y:
-                    self.peak_y = dy
-                elapsed = now - self.stage1_start
-                remaining = max(0.0, 8.0 - elapsed)
-                self.progress_label.configure(
-                    text=f"Szczyt X: {self.peak_x:.3f} | Szczyt Y: {self.peak_y:.3f} | Pozostało: {remaining:.1f}s"
-                )
-                if remaining <= 0:
-                    self.next_btn.configure(state="normal")
-                    self.status_label.configure(text="Pomiar amplitudy zakończony. Przejdź dalej.")
-            elif self.stage == 2:
-                self.stability_samples.append((float(nose.x), float(nose.y)))
-                elapsed = now - self.stage2_start
-                remaining = max(0.0, 5.0 - elapsed)
-                self.progress_label.configure(
-                    text=f"Próbki: {len(self.stability_samples)} | Pozostało: {remaining:.1f}s"
-                )
-                if remaining <= 0 and len(self.stability_samples) > 10:
-                    self.finish_btn.configure(state="normal")
-                    self.status_label.configure(
-                        text="Test stabilności zakończony. Kliknij Zakończ, aby zapisać kalibrację."
-                    )
-        else:
+        self._last_sample_at = sample.captured_at
+        position = sample.position
+        self._draw(position)
+        if position is None:
             self.status_label.configure(text="Nie wykryto twarzy. Ustaw się przed kamerą.")
-
-        try:
-            rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            img = Image.fromarray(rgb)
-            ctk_img = ctk.CTkImage(light_image=img, dark_image=img, size=(640, 360))
-            self.preview_label.configure(image=ctk_img, text="")
-            self._image_ref = ctk_img
-        except Exception:
-            pass
-
-        self.after(30, self._tick)
-
-    @staticmethod
-    def _pct_range(values, pct=95):
-        """Robust spread: distance between percentile and median."""
-        if len(values) < 2:
-            return 0.0
-        s = sorted(values)
-        n = len(s)
-        median = s[n // 2]
-        idx = min(n - 1, max(0, int(round(pct / 100.0 * (n - 1)))))
-        return abs(s[idx] - median)
-
-    def _finish(self):
-        max_peak = max(self.peak_x, self.peak_y, 1e-3)
-        sensitivity = 0.15 / max_peak
-        sensitivity = max(1.0, min(3.0, sensitivity))
-
-        if self.fine_mode:
-            sensitivity *= 0.6
-
-        jitter = 0.0
-        if len(self.stability_samples) > 1:
-            xs = [sample[0] for sample in self.stability_samples]
-            ys = [sample[1] for sample in self.stability_samples]
-            jitter = (self._pct_range(xs) + self._pct_range(ys)) / 2.0
-
-        # Bazowe wygładzanie z marży na drgania
-        smoothing = 0.70 + jitter * 25.0
-        smoothing = max(0.55, min(0.96, smoothing))
-
-        # Strefa martwa skala się z measured jitter — większe drgania = większa strefa
-        dead_zone = 1.5 + jitter * 60.0
-        dead_zone = max(1.0, min(10.0, dead_zone))
-        if self.fine_mode:
-            dead_zone = min(dead_zone, 6.0)
-            smoothing = min(smoothing, 0.90)
-
-        tracker = self.master_app.tracker
-        try:
-            tracker.center_x = self.center_x
-            tracker.center_y = self.center_y
-            tracker.is_calibrated = True
-            tracker.configure_cursor(
-                sensitivity=sensitivity, smoothing=smoothing, dead_zone=dead_zone
+            self._good_since = None
+            return
+        now = sample.captured_at
+        if self.stage == "position":
+            self._handle_position(position, now)
+            return
+        if self._stage_started is None:
+            self._stage_started = now
+        elapsed = now - self._stage_started
+        if self.stage == "amplitude":
+            self.peak = max(
+                self.peak, abs(position[0] - self.center[0]), abs(position[1] - self.center[1])
             )
-        except Exception:
-            pass
-
-        try:
-            from core.calibration_manager import save_profile
-
-            save_profile(
-                self.center_x,
-                self.center_y,
-                getattr(tracker, "blink_threshold", 0.15),
-                [],
-                sensitivity=sensitivity,
-                smoothing=smoothing,
-                dead_zone=dead_zone,
+            remaining = max(0.0, AMPLITUDE_SECONDS - elapsed)
+            self.progress_label.configure(
+                text=f"Amplituda: {self.peak:.3f} | Pozostało: {remaining:.1f}s"
             )
-        except Exception:
-            pass
-
-        try:
-            mode_txt = " (tryb precyzyjny)" if self.fine_mode else ""
-            self.master_app.label_status.configure(
-                text=(
-                    f"Kalibracja zakończona{mode_txt}. Czułość: {sensitivity:.2f}, "
-                    f"wygładzanie: {smoothing:.2f}, strefa martwa: {dead_zone:.1f}px"
-                ),
-                text_color="green",
+            if remaining <= 0:
+                self.next_btn.configure(state="normal")
+                self.status_label.configure(text="Pomiar amplitudy zakończony. Przejdź dalej.")
+        else:
+            self.stability_samples.append(tuple(position))
+            remaining = max(0.0, STABILITY_SECONDS - elapsed)
+            self.progress_label.configure(
+                text=f"Próbki: {len(self.stability_samples)} | Pozostało: {remaining:.1f}s"
             )
-        except Exception:
-            pass
+            if remaining <= 0 and len(self.stability_samples) >= MIN_STABILITY_SAMPLES:
+                self.finish_btn.configure(state="normal")
+                self.status_label.configure(
+                    text="Test stabilności zakończony. Kliknij Zakończ, aby zapisać ustawienia."
+                )
+
+    def _handle_position(self, position, now):
+        if not all(CENTER_BOX[0] <= value <= CENTER_BOX[1] for value in position):
+            self._good_since = None
+            self.next_btn.configure(state="disabled")
+            self.status_label.configure(text="Ustaw głowę centralnie (punkt w zielonej ramce).")
+            return
+        if self._good_since is None:
+            self._good_since = now
+        elif now - self._good_since >= CENTER_HOLD:
+            self.center = tuple(position)
+            self.next_btn.configure(state="normal")
+            self.status_label.configure(text="Pozycja prawidłowa. Możesz przejść dalej.")
+
+    def tracking_unavailable(self, message):
+        """Tracking stopped; restart the current stage once it is back."""
+        if self._closed:
+            return
+        self._good_since = None
+        self._stage_started = None
+        self.peak = 0.0
+        self.stability_samples = []
+        self._draw(None)
+        self.status_label.configure(text=message)
+        self.progress_label.configure(text="")
+        self.finish_btn.configure(state="disabled")
+        if self.stage != "position":
+            self.next_btn.configure(state="disabled")
+
+    def finish(self):
+        if self._closed:
+            return
+        peak = None if self.calibrated else self.peak
+        try:
+            profile = compute_profile(self.stability_samples, peak=peak, fine_mode=self.fine_mode)
+        except ValueError:
+            self.status_label.configure(text="Za mało próbek. Powtórz test stabilności.")
+            return
+        center = None if self.calibrated else self.center
+        self.on_finish(profile, center)
+        self._close()
+
+    def cancel(self):
         self._close()
 
     def _close(self):
-        self._running = False
-        if self._cap is not None:
-            try:
-                self._cap.release()
-            except Exception:
-                pass
-            self._cap = None
-        if self._face_mesh is not None:
-            try:
-                self._face_mesh.close()
-            except Exception:
-                pass
-            self._face_mesh = None
+        if self._closed:
+            return
+        self._closed = True
+        self.on_close()
         try:
             self.destroy()
         except Exception:

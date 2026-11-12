@@ -3,6 +3,7 @@ import queue
 import threading
 import time
 import winsound
+from dataclasses import replace
 
 import customtkinter as ctk
 import cv2
@@ -10,6 +11,7 @@ import cv2
 from core.calibration import CalibrationManager, HeadSample
 from core.calibration_wizard import CalibrationWizard
 from core.cursor_controller import DEFAULT_CURSOR_SETTINGS
+from core.cursor_profile import CursorProfileStore
 from core.on_screen_keyboard import OnScreenKeyboard
 from core.vision_tracker import VisionTracker
 from core.voice_assistant import PolishVoiceAssistant
@@ -36,6 +38,9 @@ class AeroAssistApp(ctk.CTk):
         self.calibration_manager = CalibrationManager()
         self.tracker.apply_calibration(self.calibration_manager.load())
         self.calibration_window = None
+        self.stability_window = None
+        self.cursor_profile_store = CursorProfileStore()
+        self._apply_cursor_profile(self.cursor_profile_store.load())
         self._calibration_open = threading.Event()
         self._calibration_samples = LatestFrameBuffer()
 
@@ -76,18 +81,6 @@ class AeroAssistApp(ctk.CTk):
         )
         self.btn_toggle.pack(pady=10, padx=40, fill="x")
 
-        # Polish calibration button - new feature
-        self.btn_calibration = ctk.CTkButton(
-            content,
-            text="Kalibracja kursora",
-            command=self.calibrate_cursor,
-            height=38,
-            fg_color="#27ae60",
-            hover_color="#2ecc71",
-            font=("Arial", 13, "bold"),
-        )
-        self.btn_calibration.pack(pady=5, padx=40, fill="x")
-
         self.btn_keyboard = ctk.CTkButton(
             content,
             text="Klawiatura ekranowa",
@@ -114,20 +107,21 @@ class AeroAssistApp(ctk.CTk):
         self.slider_sens = ctk.CTkSlider(
             content, from_=1.0, to=3.0, command=self.change_sensitivity
         )
-        self.slider_sens.set(DEFAULT_CURSOR_SETTINGS.sensitivity)
+        settings = self.tracker.cursor_controller.settings
+        self.slider_sens.set(settings.sensitivity)
         self.slider_sens.pack(pady=8, padx=40, fill="x")
 
         ctk.CTkLabel(content, text="Wygładzanie ruchu (więcej = płynniej)").pack(pady=(8, 0))
         self.slider_smoothing = ctk.CTkSlider(
             content, from_=0.0, to=0.95, command=self.change_smoothing
         )
-        self.slider_smoothing.set(DEFAULT_CURSOR_SETTINGS.smoothing)
+        self.slider_smoothing.set(settings.smoothing)
         self.slider_smoothing.pack(pady=8, padx=40, fill="x")
         ctk.CTkLabel(content, text="Strefa martwa (0–10 pikseli)").pack(pady=(8, 0))
         self.slider_dead_zone = ctk.CTkSlider(
             content, from_=0.0, to=10.0, command=self.change_dead_zone
         )
-        self.slider_dead_zone.set(DEFAULT_CURSOR_SETTINGS.dead_zone)
+        self.slider_dead_zone.set(settings.dead_zone)
         self.slider_dead_zone.pack(pady=8, padx=40, fill="x")
         ctk.CTkButton(
             content, text="Przywróć ustawienia domyślne", command=self.reset_cursor_settings
@@ -161,6 +155,13 @@ class AeroAssistApp(ctk.CTk):
             pady=4
         )
         ctk.CTkButton(
+            content,
+            text="Test stabilności (wygładzanie)",
+            command=self.open_stability_test,
+            fg_color="#27ae60",
+            hover_color="#2ecc71",
+        ).pack(pady=4)
+        ctk.CTkButton(
             content, text="Przywróć domyślne", command=self.restore_default_calibration
         ).pack(pady=(4, 16))
 
@@ -178,11 +179,15 @@ class AeroAssistApp(ctk.CTk):
                 pass
             self.keyboard_window = None
 
+    def _lift_open_calibration_window(self):
+        for window in (self.calibration_window, self.stability_window):
+            if window is not None:
+                window.lift()
+                return True
+        return False
+
     def open_calibration(self):
-        if self._closing:
-            return
-        if self.calibration_window is not None:
-            self.calibration_window.lift()
+        if self._closing or self._lift_open_calibration_window():
             return
         self._calibration_open.set()
         self.calibration_window = CalibrationWindow(
@@ -229,6 +234,7 @@ class AeroAssistApp(ctk.CTk):
 
     def _save_calibration(self, parameters):
         self.calibration_manager.save(parameters)
+        self._drop_profile_sensitivity()
         self._end_calibration()
         self.label_calibration.configure(text="Kalibracja zakończona — aktywna")
 
@@ -245,7 +251,89 @@ class AeroAssistApp(ctk.CTk):
     def restore_default_calibration(self):
         if self.calibration_window is not None:
             self.calibration_window.cancel()
+        if self.stability_window is not None:
+            self.stability_window.cancel()
+        self.reset_cursor_settings()
         return self._restore_calibration()
+
+    # --- Stability test (cursor smoothing / dead zone) ---
+    def _apply_cursor_profile(self, profile):
+        if profile is None:
+            return
+        changes = profile.cursor_changes()
+        if self.calibration_manager.active is not None:
+            # A five-point mapping already spans the screen; extra gain would overshoot.
+            changes.pop("sensitivity", None)
+        try:
+            self.tracker.configure_cursor(**changes)
+        except ValueError:
+            logger.warning("Ignoring invalid cursor profile", exc_info=True)
+
+    def _sync_cursor_sliders(self):
+        settings = self.tracker.cursor_controller.settings
+        self.slider_sens.set(settings.sensitivity)
+        self.slider_smoothing.set(settings.smoothing)
+        self.slider_dead_zone.set(settings.dead_zone)
+
+    def _drop_profile_sensitivity(self):
+        """Sensitivity tuned for uncalibrated mode must not scale a five-point mapping."""
+        profile = self.cursor_profile_store.load()
+        if profile is None or profile.sensitivity is None:
+            return
+        try:
+            self.cursor_profile_store.save(replace(profile, sensitivity=None))
+        except OSError:
+            logger.exception("Unable to update cursor profile")
+        self.tracker.configure_cursor(sensitivity=DEFAULT_CURSOR_SETTINGS.sensitivity)
+        self.slider_sens.set(DEFAULT_CURSOR_SETTINGS.sensitivity)
+
+    def open_stability_test(self):
+        if self._closing or self._lift_open_calibration_window():
+            return
+        self._calibration_open.set()
+        self._calibration_samples.clear()
+        self.stability_window = CalibrationWizard(
+            self,
+            calibrated=self.calibration_manager.active is not None,
+            on_begin=self._begin_stability_test,
+            on_finish=self._finish_stability_test,
+            on_close=self._end_stability_test,
+        )
+
+    def _begin_stability_test(self):
+        if self._closing or self._tracking_state == "stopping":
+            return False
+        # Freeze cursor movement while measuring; eye gestures stay active.
+        self.tracker.set_calibration_collecting(True)
+        if self._tracking_state == "stopped":
+            self.toggle_system()
+        return self._tracking_state in ("starting", "running")
+
+    def _finish_stability_test(self, profile, center):
+        self._apply_cursor_profile(profile)
+        if center is not None:
+            self.tracker.center_x, self.tracker.center_y = center
+        saved = ""
+        try:
+            self.cursor_profile_store.save(profile)
+        except OSError:
+            logger.exception("Unable to save cursor profile")
+            saved = " (nie zapisano na dysku)"
+        self._sync_cursor_sliders()
+        settings = self.tracker.cursor_controller.settings
+        self.label_status.configure(
+            text=(
+                f"Test zakończony{saved}. Czułość: {settings.sensitivity:.2f}, "
+                f"wygładzanie: {settings.smoothing:.2f}, strefa martwa: {settings.dead_zone:.1f}px"
+            ),
+            text_color="green",
+        )
+
+    def _end_stability_test(self):
+        self.stability_window = None
+        self._calibration_open.clear()
+        self._calibration_samples.clear()
+        self.tracker.set_calibration_collecting(False)
 
     def change_sensitivity(self, val):
         self.tracker.sensitivity = float(val)
@@ -266,6 +354,10 @@ class AeroAssistApp(ctk.CTk):
         self.slider_sens.set(defaults.sensitivity)
         self.slider_smoothing.set(defaults.smoothing)
         self.slider_dead_zone.set(defaults.dead_zone)
+        try:
+            self.cursor_profile_store.clear()
+        except OSError:
+            logger.exception("Unable to remove cursor profile")
 
     def trigger_assistant(self):
         """Called by the camera worker; never call Tk from this boundary."""
@@ -480,18 +572,6 @@ class AeroAssistApp(ctk.CTk):
 
         self.after(0, run_action)
 
-    # --- CALIBRATION SYSTEM ---
-    def calibrate_cursor(self):
-        """Open the interactive calibration wizard."""
-        if (
-            getattr(self, "_calibration_window", None) is not None
-            and self._calibration_window is not None
-            and self._calibration_window.winfo_exists()
-        ):
-            self._calibration_window.lift()
-            return
-        self._calibration_window = CalibrationWizard(self)
-
     def _poll_worker_events(self):
         """Tk schedules this poll; workers use Queue.put and never Tk.after."""
         if self._closed:
@@ -537,10 +617,11 @@ class AeroAssistApp(ctk.CTk):
                 self._set_stopped_state()
         if self._closing:
             self._finish_close()
-        if self.calibration_window is not None and not self._closing:
+        active_window = self.calibration_window or self.stability_window
+        if active_window is not None and not self._closing:
             sample = self._calibration_samples.take()
             if self._stop_event.is_set():
-                self.calibration_window.tracking_unavailable(
+                active_window.tracking_unavailable(
                     self._tracking_error or "Śledzenie wstrzymane. Powtórz punkt, aby wznowić."
                 )
             elif (
@@ -548,7 +629,7 @@ class AeroAssistApp(ctk.CTk):
                 and sample.session_id == self._session_id
                 and time.monotonic() - sample.captured_at <= 1
             ):
-                self.calibration_window.receive_sample(sample)
+                active_window.receive_sample(sample)
         if not self._closing:
             packet = self._preview_frames.take()
             if (
@@ -571,6 +652,8 @@ class AeroAssistApp(ctk.CTk):
             return
         if self.calibration_window is not None:
             self.calibration_window.cancel()
+        if self.stability_window is not None:
+            self.stability_window.cancel()
         self._closing = True
         if (
             hasattr(self, "keyboard_window")
